@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from queue import Queue
 from typing import Any, Dict, Optional
 
 import requests
@@ -35,7 +36,102 @@ class PayServerConfig:
     webhook_retry_count: int = 3
 
 
-_ORDER_LOCK = threading.Lock()
+@dataclass
+class _PayOrderJob:
+    trade_no: str
+    amount: str
+    webhook: str
+    created_event: threading.Event = field(default_factory=threading.Event)
+    response: Optional[Dict[str, Any]] = None
+    error: Optional[Exception] = None
+    qr_path: str = ""
+
+
+class _PayOrderQueueWorker:
+    def __init__(self, config: PayServerConfig) -> None:
+        self._config = config
+        self._queue: Queue[_PayOrderJob] = Queue()
+        self._active_jobs: Dict[str, _PayOrderJob] = {}
+        self._active_jobs_lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def submit(self, trade_no: str, amount: str, webhook: str) -> tuple[_PayOrderJob, bool, int]:
+        with self._active_jobs_lock:
+            existing_job = self._active_jobs.get(trade_no)
+            if existing_job is not None:
+                return existing_job, True, self._queue.qsize()
+
+            job = _PayOrderJob(trade_no=trade_no, amount=amount, webhook=webhook)
+            self._active_jobs[trade_no] = job
+            queue_size = self._enqueue(job)
+            return job, False, queue_size
+
+    def _enqueue(self, job: _PayOrderJob) -> int:
+        self._queue.put(job)
+        return self._queue.qsize()
+
+    def _run(self) -> None:
+        while True:
+            job = self._queue.get()
+            try:
+                self._process_job(job)
+            except Exception as exc:
+                job.error = exc
+                job.created_event.set()
+                traceback.print_exc()
+            finally:
+                if job.error is not None:
+                    self._forget_job(job)
+                self._queue.task_done()
+
+    def _process_job(self, job: _PayOrderJob) -> None:
+        qr_path = ""
+        try:
+            action_result = generate_pay_order(
+                amount=job.amount,
+                order_no=job.trade_no,
+                pid=self._config.window_pid,
+                window_title=self._config.window_title,
+                timeout_seconds=self._config.create_timeout_seconds,
+                save_qr_code=True,
+                qr_output_dir=self._config.qr_output_dir,
+                return_to_wait_page=True,
+                wait_paid_and_close=False,
+            )
+            qr_info = action_result.get("qr_code") or {}
+            qr_path = str(qr_info.get("output_path") or "")
+            job.qr_path = qr_path
+            pay_qrcode = file_to_base64(qr_path)
+            job.response = {
+                "code": 1,
+                "msg": "success",
+                "data": {
+                    "trade_no": job.trade_no,
+                    "pay_qrcode": pay_qrcode,
+                },
+            }
+            job.created_event.set()
+        except Exception as exc:
+            job.error = exc
+            job.created_event.set()
+            raise
+
+        _wait_paid_webhook_and_cleanup(
+            config=self._config,
+            trade_no=job.trade_no,
+            amount=job.amount,
+            webhook=job.webhook,
+            qr_path=qr_path,
+        )
+        self._forget_job(job)
+
+    def _forget_job(self, job: _PayOrderJob) -> None:
+        with self._active_jobs_lock:
+            if self._active_jobs.get(job.trade_no) is job:
+                del self._active_jobs[job.trade_no]
 
 
 def create_app(config: PayServerConfig) -> Flask:
@@ -44,6 +140,8 @@ def create_app(config: PayServerConfig) -> Flask:
         ensure_rsa_keypair(config.webhook_private_key_path, config.webhook_public_key_path)
 
     app = Flask(__name__)
+    order_worker = _PayOrderQueueWorker(config)
+    order_worker.start()
 
     @app.post("/create")
     def create_order():
@@ -70,47 +168,16 @@ def create_app(config: PayServerConfig) -> Flask:
         if not sign_ok:
             return jsonify(_error("sign 校验失败")), 400
 
-        if not _ORDER_LOCK.acquire(blocking=False):
-            return jsonify(_error("当前已有订单正在等待支付，请稍后再试")), 429
+        job, reused, queue_size = order_worker.submit(trade_no, amount, webhook)
+        if reused:
+            print(f"复用已有订单二维码: {trade_no}", flush=True)
+        else:
+            print(f"订单已进入队列: {trade_no}, 当前队列长度: {queue_size}", flush=True)
+        job.created_event.wait()
 
-        qr_path = ""
-        try:
-            action_result = generate_pay_order(
-                amount=amount,
-                order_no=trade_no,
-                pid=config.window_pid,
-                window_title=config.window_title,
-                timeout_seconds=config.create_timeout_seconds,
-                save_qr_code=True,
-                qr_output_dir=config.qr_output_dir,
-                return_to_wait_page=True,
-                wait_paid_and_close=False,
-            )
-            qr_info = action_result.get("qr_code") or {}
-            qr_path = str(qr_info.get("output_path") or "")
-            pay_qrcode = file_to_base64(qr_path)
-        except Exception as exc:
-            _ORDER_LOCK.release()
-            traceback.print_exc()
-            return jsonify(_error(f"创建收款单失败: {exc}")), 500
-
-        worker = threading.Thread(
-            target=_wait_paid_webhook_and_cleanup,
-            args=(config, trade_no, amount, webhook, qr_path),
-            daemon=True,
-        )
-        worker.start()
-
-        return jsonify(
-            {
-                "code": 1,
-                "msg": "success",
-                "data": {
-                    "trade_no": trade_no,
-                    "pay_qrcode": pay_qrcode,
-                },
-            }
-        )
+        if job.error is not None:
+            return jsonify(_error(f"创建收款单失败: {job.error}")), 500
+        return jsonify(job.response)
 
     return app
 
@@ -146,7 +213,6 @@ def _wait_paid_webhook_and_cleanup(
     finally:
         if webhook_sent:
             remove_file_if_exists(qr_path)
-        _ORDER_LOCK.release()
 
 
 def _post_payment_success_webhook(

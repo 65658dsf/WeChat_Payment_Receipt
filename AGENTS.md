@@ -43,7 +43,7 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - `wait_poll_interval_seconds`、`paste_select_wait_seconds`、`paste_after_wait_seconds` 用于控制等待速度，默认按快速操作配置。
 - Flask 服务启动入口是 `python server.py`。`POST /create` 请求里的 `sign` 是客户端用 `keys/public_key.pem` 加密 `pid+amount+timestamp` 后得到的 base64/base64url 文本；服务端用 `keys/private_key.pem` 解密并比对。
 - Webhook 回调使用另一组全新的密钥：服务端用 `keys/webhook_public_key.pem` 加密 `trade_no+total_amount+trade_status` 生成 webhook `sign`；客户端用 `keys/webhook_private_key.pem` 解密并比对。
-- `/create` 创建收款单后会先返回二维码 base64；后台线程继续等待支付成功，成功后 POST 带签名的 webhook，并在 webhook 成功后删除本地二维码图片。
+- `/create` 请求验签通过后进入单线程订单队列。队列 worker 一次只操作一个微信收款单：先创建收款单并让当前请求返回二维码 base64，再等待支付成功，成功后 POST 带签名的 webhook，并在 webhook 成功后删除本地二维码图片。已有订单等待支付时，新的不同订单号 `/create` 请求会排队等待，不要返回 429 拒绝；相同订单号如果仍在排队、创建中或等待支付中，应复用已有 job 并返回同一个二维码。
 
 ## 常用入口配置
 

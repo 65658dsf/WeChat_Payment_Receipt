@@ -110,9 +110,11 @@
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
 | `PayServerConfig` | `.\utools\api\pay_server.py` | Flask 支付服务配置，包含创建订单密钥路径、webhook 专用密钥路径、微信窗口标题、输出目录、等待支付超时和 webhook 重试参数。 |
+| `_PayOrderJob` | `.\utools\api\pay_server.py` | 内部队列任务对象，保存订单号、金额、webhook、二维码创建结果和创建完成事件。 |
+| `_PayOrderQueueWorker` | `.\utools\api\pay_server.py` | 单线程订单队列 worker，按顺序创建收款单、等待支付、发送 webhook 并清理二维码图片；维护活跃订单表，相同订单号复用已有二维码。 |
 | `create_app()` | `.\utools\api\pay_server.py` | 创建 Flask app，并注册 `POST /create` 端点。 |
-| `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点内部处理函数：校验 JSON、解密验签、创建收款单、返回二维码 base64，并启动后台等待支付线程。 |
-| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 后台线程函数，等待支付成功后关闭/删除收款单，发送 webhook，并删除本地二维码图片。 |
+| `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点内部处理函数：校验 JSON、解密验签，把不同订单号加入队列；相同订单号复用已有 job，并等待二维码创建后返回 base64。 |
+| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用，等待支付成功后关闭/删除收款单，发送 webhook，并删除本地二维码图片。 |
 | `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知，并用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`。 |
 | `_validate_create_payload()` | `.\utools\api\pay_server.py` | 校验 `/create` 请求必填参数：`pid`、`amount`、`timestamp`、`webhook`、`sign`。 |
 | `_error()` | `.\utools\api\pay_server.py` | 构建统一错误 JSON。 |
