@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any, Dict, Optional
 
 from utools.components.wechat_pay_order import (
@@ -14,10 +15,14 @@ from utools.ui.screenshot import capture_relative_crop
 from utools.ui.inspector import _safe_get, _safe_method, _uia_control_to_info
 from utools.ui.operator import (
     click_relative,
+    click_screen_point,
     enable_fast_timings,
     find_first_uia_top_window,
     find_uia_click_target,
+    iter_uia_tree,
     paste_text,
+    send_keys_to_control,
+    uia_text_blob,
     uia_tree_has_visible_text,
     wait_for_visible_uia_text,
 )
@@ -62,8 +67,11 @@ def generate_pay_order(
     timeout_seconds: float = 8.0,
     save_qr_code: bool = True,
     qr_output_dir: str = "outputs",
+    return_to_wait_page: bool = True,
+    wait_paid_and_close: bool = False,
+    wait_paid_timeout_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """打开“创建收款单”界面，填写金额/订单号，并保存收款码图片."""
+    """创建收款单、保存收款码，并可等待支付完成后关闭收款单."""
 
     enable_fast_timings()
     _require_non_empty(amount, "金额")
@@ -87,7 +95,26 @@ def generate_pay_order(
             output_dir=qr_output_dir,
             timeout_seconds=timeout_seconds,
         )
-    action_result["message"] = "已创建收款单，并生成收款码截图."
+        if return_to_wait_page:
+            action_result["return_wait_page"] = return_to_wait_payment_page(
+                root=root,
+                timeout_seconds=timeout_seconds,
+            )
+            if wait_paid_and_close:
+                action_result["payment"] = wait_paid_then_close_pay_order(
+                    root=root,
+                    order_no=order_no,
+                    timeout_seconds=wait_paid_timeout_seconds,
+                )
+                print("支付成功", flush=True)
+    if save_qr_code and return_to_wait_page and wait_paid_and_close:
+        action_result["message"] = "已创建收款单，已生成收款码截图，已收款并关闭收款单."
+    elif save_qr_code and return_to_wait_page:
+        action_result["message"] = "已创建收款单，已生成收款码截图，并返回主界面等待付款."
+    elif save_qr_code:
+        action_result["message"] = "已创建收款单，并生成收款码截图."
+    else:
+        action_result["message"] = "已创建收款单."
     return action_result
 
 
@@ -202,6 +229,215 @@ def generate_and_capture_qr_code(
         "generate_click_point": generate_click_point,
         **capture_result,
     }
+
+
+def return_to_wait_payment_page(
+    root: Any,
+    timeout_seconds: float = 8.0,
+) -> Dict[str, Any]:
+    """从生成分享图页面返回两次，等待回到主界面订单等待付款状态."""
+
+    components = WECHAT_PAY_ORDER
+    back_click_points = []
+    for _ in range(components.return_back_click_count):
+        point = click_relative(
+            root,
+            components.return_back_button_x_ratio,
+            components.return_back_button_y_ratio,
+        )
+        back_click_points.append({"x": point[0], "y": point[1]})
+        time.sleep(components.return_back_after_click_wait_seconds)
+
+    wait_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.wait_payment_status_text,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if wait_root is None:
+        raise TimeoutError(
+            f"返回主界面后未在{timeout_seconds}秒内看到“{components.wait_payment_status_text}”."
+        )
+
+    return {
+        "returned": True,
+        "back_click_count": components.return_back_click_count,
+        "back_click_points": back_click_points,
+        "wait_text": components.wait_payment_status_text,
+    }
+
+
+def wait_paid_then_close_pay_order(
+    root: Any,
+    order_no: str = "",
+    timeout_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    """每秒刷新主界面，发现已支付后进入详情并关闭收款单."""
+
+    components = WECHAT_PAY_ORDER
+    timeout = timeout_seconds
+    deadline = None if timeout is None else time.time() + timeout
+    refresh_count = 0
+    paid_card_point: Optional[tuple[int, int]] = None
+
+    while True:
+        paid_card_point = _find_paid_order_card_click_point(root, str(order_no))
+        if paid_card_point is not None:
+            break
+        if not order_no and uia_tree_has_visible_text(root, components.paid_status_text, max_depth=8):
+            break
+        if deadline is not None and time.time() >= deadline:
+            raise TimeoutError(
+                f"等待付款超时，{timeout}秒内未看到“{components.paid_status_text}”."
+            )
+        refresh_started_at = time.time()
+        send_keys_to_control(
+            root,
+            components.payment_refresh_key,
+            after_wait_seconds=components.payment_refresh_after_wait_seconds,
+        )
+        refresh_count += 1
+        refresh_elapsed = time.time() - refresh_started_at
+        time.sleep(max(0.0, components.payment_refresh_interval_seconds - refresh_elapsed))
+
+    if paid_card_point is not None:
+        paid_card_point = click_screen_point(*paid_card_point)
+    else:
+        paid_card_point = _click_text_or_relative(
+            root,
+            text=components.paid_status_text,
+            x_ratio=components.paid_card_x_ratio,
+            y_ratio=components.paid_card_y_ratio,
+        )
+    time.sleep(components.after_open_paid_card_wait_seconds)
+
+    detail_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.payment_detail_title,
+        timeout_seconds=8.0,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if detail_root is None:
+        raise TimeoutError(f"点击已支付卡片后未进入“{components.payment_detail_title}”.")
+
+    more_action_point = _click_text_or_relative(
+        root,
+        text=components.more_action_text,
+        x_ratio=components.more_action_x_ratio,
+        y_ratio=components.more_action_y_ratio,
+    )
+    time.sleep(components.after_more_action_wait_seconds)
+
+    close_menu_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.close_pay_order_text,
+        timeout_seconds=8.0,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if close_menu_root is None:
+        raise TimeoutError(f"点击更多操作后未看到“{components.close_pay_order_text}”.")
+
+    close_point = _click_text_or_relative(
+        root,
+        text=components.close_pay_order_text,
+        x_ratio=components.close_pay_order_x_ratio,
+        y_ratio=components.close_pay_order_y_ratio,
+    )
+
+    return {
+        "paid": True,
+        "closed": True,
+        "refresh_count": refresh_count,
+        "paid_card_click_point": {"x": paid_card_point[0], "y": paid_card_point[1]},
+        "more_action_click_point": {"x": more_action_point[0], "y": more_action_point[1]},
+        "close_click_point": {"x": close_point[0], "y": close_point[1]},
+    }
+
+
+def _find_paid_order_card_click_point(root: Any, order_no: str) -> Optional[tuple[int, int]]:
+    if not order_no:
+        return None
+
+    components = WECHAT_PAY_ORDER
+    order_rects = _find_visible_text_rects(root, order_no)
+    paid_rects = _find_visible_text_rects(root, components.paid_status_text)
+    for order_rect in order_rects:
+        for paid_rect in paid_rects:
+            if _looks_like_same_order_card(order_rect, paid_rect):
+                return _rect_center(paid_rect)
+    return None
+
+
+def _find_visible_text_rects(root: Any, text: str) -> list[Dict[str, int]]:
+    rects: list[Dict[str, int]] = []
+    for item, depth in iter_uia_tree(root, max_depth=8):
+        info = _uia_control_to_info(item, 0, depth, "text-rect")
+        rectangle = info.get("rectangle") or {}
+        width = int(rectangle.get("width") or 0)
+        height = int(rectangle.get("height") or 0)
+        if info.get("control_type") == "Document":
+            continue
+        if info.get("visible") is False:
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        if text not in uia_text_blob(item):
+            continue
+        rects.append(
+            {
+                "left": int(rectangle.get("left") or 0),
+                "top": int(rectangle.get("top") or 0),
+                "right": int(rectangle.get("right") or 0),
+                "bottom": int(rectangle.get("bottom") or 0),
+                "width": width,
+                "height": height,
+            }
+        )
+    return rects
+
+
+def _looks_like_same_order_card(
+    order_rect: Dict[str, int],
+    paid_rect: Dict[str, int],
+) -> bool:
+    vertical_distance = paid_rect["top"] - order_rect["top"]
+    horizontal_distance = paid_rect["left"] - order_rect["left"]
+    if vertical_distance < -20 or vertical_distance > 140:
+        return False
+    if horizontal_distance < -120 or horizontal_distance > 260:
+        return False
+    return True
+
+
+def _rect_center(rectangle: Dict[str, int]) -> tuple[int, int]:
+    return (
+        rectangle["left"] + rectangle["width"] // 2,
+        rectangle["top"] + rectangle["height"] // 2,
+    )
+
+
+def _click_text_or_relative(
+    root: Any,
+    text: str,
+    x_ratio: float,
+    y_ratio: float,
+) -> tuple[int, int]:
+    target = find_uia_click_target(root, text=text, max_depth=10)
+    if target is not None:
+        target_info = _uia_control_to_info(target, 0, 0, "target")
+        rectangle = target_info.get("rectangle") or {}
+        left = int(rectangle.get("left") or 0)
+        top = int(rectangle.get("top") or 0)
+        width = int(rectangle.get("width") or 0)
+        height = int(rectangle.get("height") or 0)
+        if width > 0 and height > 0:
+            try:
+                target.click_input()
+                return left + width // 2, top + height // 2
+            except Exception:
+                pass
+
+    return click_relative(root, x_ratio, y_ratio)
 
 
 def _fill_amount_by_keypad(root: Any, amount: str) -> tuple[int, int]:

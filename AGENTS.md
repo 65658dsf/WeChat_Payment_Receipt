@@ -33,7 +33,8 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - 不要把业务动作堆进 `main.py`；`main.py` 只保留配置和调用顺序。
 - 如果后续新增动作，例如填写金额、填写说明、点击创建，请优先新增到 `utools/wechat/pay_order.py`，底层通用控件查找能力复用 `utools/ui/operator.py`。
 - 当前微信小程序页面内的金额/说明输入框不稳定暴露为标准 `Edit` 控件。金额通过窗口相对坐标点击小程序数字键盘输入；订单号通过窗口相对坐标点击“收款说明”后剪贴板粘贴。输入区域坐标比例维护在 `utools/components/wechat_pay_order.py`。
-- 创建收款单完成后会点击“生成收款码”，进入“生成分享图”页面，并按相对比例裁剪中间白色收款码卡片保存到 `outputs/`。
+- 创建收款单完成后会点击“生成收款码”，进入“生成分享图”页面，并按相对比例裁剪中间白色收款码卡片保存到 `outputs/`。截图保存后默认点击左上角返回两次，回到主界面等待付款列表；可继续每秒刷新一次，检测到“已支付”后进入收款记录详情，点击“更多操作”并关闭收款单。
+- 等待支付时默认发送 `{F5}` 刷新页面，并优先用订单号和“已支付”文本的可见矩形位置匹配同一张订单卡片；如果刷新方式不适配当前微信版本，优先调整 `payment_refresh_key`。
 - 为了速度，`amount_clear_backspace_count` 默认是 `0`，表示不预先清空金额。新打开创建页时金额为空，可在 1-2 秒内完成填写；如果反复复用同一个创建页并需要覆盖旧金额，可以把它改成 `8` 或更大。
 - `wait_poll_interval_seconds`、`paste_select_wait_seconds`、`paste_after_wait_seconds` 用于控制等待速度，默认按快速操作配置。
 
@@ -48,5 +49,8 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - `Generator_PayOrder_OrderNo = "ORDER001"`：要填写到“收款说明”的订单号。
 - `Generator_PayOrder_SaveQRCode = True`：创建后保存收款码截图。
 - `Generator_PayOrder_QRCodeOutputDir = r"outputs"`：收款码截图输出目录。
+- `Generator_PayOrder_ReturnToWaitPage = True`：保存收款码截图后点击左上角返回两次，回到主界面等待付款。
+- `Generator_PayOrder_WaitPaidAndClose = True`：回到主界面后每秒刷新一次，看到“已支付”后进入详情并关闭收款单。
+- `Generator_PayOrder_WaitPaidTimeoutSeconds = None`：等待支付的超时时间；`None` 表示一直等待。
 - `FIND_ONLY = True`：只查找窗口和 PID，不采集组件树。
 - `OUTPUT = r"outputs\output.json"`：保存 JSON 输出。

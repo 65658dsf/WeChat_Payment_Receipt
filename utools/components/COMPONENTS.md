@@ -6,7 +6,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `run()` | `D:\LemonDev\收款单收款\main.py` | 按 `main.py` 顶部配置执行流程：可只查找窗口，也可自动进入创建收款单界面、填写金额/订单号后采集组件树。 |
+| `run()` | `D:\LemonDev\收款单收款\main.py` | 按 `main.py` 顶部配置执行流程：可只查找窗口，也可自动创建收款单、保存收款码、等待支付并关闭收款单。 |
 
 ## UI 获取模块
 
@@ -45,7 +45,9 @@
 | `find_uia_click_target()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 按文本查找最合适的可点击控件，优先 Button、精确文本、小面积控件。 |
 | `enable_fast_timings()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 降低 pywinauto 默认动作等待时间，用于加快点击、聚焦、键盘输入。 |
 | `click_relative()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 按控件矩形相对坐标点击，适合小程序内部不暴露标准控件的区域；金额数字键盘依赖它。 |
+| `click_screen_point()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 点击指定屏幕坐标；等待支付时用于点击匹配到的订单卡片文本位置。 |
 | `paste_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 用剪贴板向当前焦点控件粘贴文本，可选择先全选清空；订单号填写依赖它。 |
+| `send_keys_to_control()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 聚焦目标窗口后发送键盘按键；等待支付期间用于每秒刷新页面。 |
 | `set_clipboard_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 使用 Windows Unicode 剪贴板 API 写入文本。 |
 | `wait_for_visible_uia_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 在指定窗口内等待可见文本出现。 |
 | `uia_tree_has_visible_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 判断控件树中是否有可见、非 Document、尺寸有效的目标文本。 |
@@ -62,10 +64,17 @@
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
 | `open_create_pay_order_page()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 自动找到“微信收款单”窗口，点击“发起收款”，等待进入“创建收款单”界面，并返回动作结果。 |
-| `generate_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 自动进入“创建收款单”界面，并把金额填到金额区域、订单号填到“收款说明”。 |
+| `generate_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 自动进入“创建收款单”界面，并把金额填到金额区域、订单号填到“收款说明”；创建后可保存收款码截图、返回主界面、等待支付并关闭收款单。 |
 | `fill_create_pay_order_fields()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 在已打开的创建收款单界面内填写金额和订单号。 |
 | `submit_create_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
 | `generate_and_capture_qr_code()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片。 |
+| `return_to_wait_payment_page()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 在收款码截图保存后点击左上角返回两次，并等待主界面出现“暂无人付款”。 |
+| `wait_paid_then_close_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 在主界面每秒刷新，等待目标订单号附近出现“已支付”，点击订单卡片进入“收款记录”，再点击“更多操作”和“关闭收款单”。 |
+| `_find_paid_order_card_click_point()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部辅助，根据订单号和“已支付”文本的可见矩形位置判断目标订单卡片，并返回点击点。 |
+| `_find_visible_text_rects()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部辅助，遍历 UIA 树并提取包含指定文本的可见控件矩形。 |
+| `_looks_like_same_order_card()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部辅助，判断订单号文本和已支付文本是否像处于同一张订单卡片。 |
+| `_rect_center()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部辅助，计算矩形中心点。 |
+| `_click_text_or_relative()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部点击辅助，优先按 UIA 文本点击，失败时按窗口相对坐标兜底。 |
 | `_fill_amount_by_keypad()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击金额区域后，通过小程序数字键盘坐标输入金额。 |
 | `_validate_amount_text()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 校验金额只能包含数字和一个小数点，并且至少包含一个数字。 |
 | `_open_create_pay_order_page()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部函数，返回创建收款单页面根控件和动作结果。 |
@@ -76,7 +85,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页/已创建/分享图标题、按钮文案、输入/创建/生成收款码/裁剪区域的窗口相对坐标，以及快速模式等待参数。 |
+| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页/已创建/分享图/已支付/收款记录标题、按钮文案、输入/创建/生成收款码/返回/订单卡片/更多操作/关闭收款单/裁剪区域的窗口相对坐标，以及快速模式等待参数。 |
 | `DEFAULT_PID` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |

@@ -148,6 +148,15 @@ def click_relative(control: Any, x_ratio: float, y_ratio: float) -> tuple[int, i
     return x, y
 
 
+def click_screen_point(x: int, y: int) -> tuple[int, int]:
+    """点击指定屏幕坐标，并返回实际点击点."""
+
+    from pywinauto import mouse  # type: ignore
+
+    mouse.click(button="left", coords=(x, y))
+    return x, y
+
+
 def paste_text(
     text: str,
     clear_existing: bool = True,
@@ -163,6 +172,16 @@ def paste_text(
         keyboard.send_keys("^a")
         time.sleep(select_wait_seconds)
     keyboard.send_keys("^v")
+    time.sleep(after_wait_seconds)
+
+
+def send_keys_to_control(control: Any, keys: str, after_wait_seconds: float = 0.05) -> None:
+    """聚焦目标窗口后发送键盘按键."""
+
+    from pywinauto import keyboard  # type: ignore
+
+    _safe_method(control, "set_focus")
+    keyboard.send_keys(keys)
     time.sleep(after_wait_seconds)
 
 

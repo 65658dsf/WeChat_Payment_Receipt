@@ -34,10 +34,13 @@ FIND_ONLY = False
 
 # True时自动点击“发起收款”，进入“创建收款单”界面，填写金额和订单号后再采集组件信息。
 Generator_PayOrder = True
-Generator_PayOrder_Amount = "1.00"
+Generator_PayOrder_Amount = "0.01"
 Generator_PayOrder_OrderNo = "ORDER001"
 Generator_PayOrder_SaveQRCode = True
 Generator_PayOrder_QRCodeOutputDir = r"outputs"
+Generator_PayOrder_ReturnToWaitPage = True
+Generator_PayOrder_WaitPaidAndClose = True
+Generator_PayOrder_WaitPaidTimeoutSeconds: Optional[float] = None
 
 # 需要写入文件时填写路径；None表示不写文件。
 OUTPUT: Optional[str] = r"outputs\output.json"
@@ -62,6 +65,9 @@ def run() -> Dict[str, Any]:
             window_title=WINDOW_TITLE,
             save_qr_code=Generator_PayOrder_SaveQRCode,
             qr_output_dir=Generator_PayOrder_QRCodeOutputDir,
+            return_to_wait_page=Generator_PayOrder_ReturnToWaitPage,
+            wait_paid_and_close=Generator_PayOrder_WaitPaidAndClose,
+            wait_paid_timeout_seconds=Generator_PayOrder_WaitPaidTimeoutSeconds,
         )
         action_pid = action_result.get("pid")
         if isinstance(action_pid, int):
