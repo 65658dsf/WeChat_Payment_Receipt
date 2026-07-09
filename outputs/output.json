@@ -1,0 +1,16 @@
+{
+  "query": {
+    "pid": null,
+    "hwnd": null,
+    "window_title": "微信收款单",
+    "backend": "win32"
+  },
+  "backend": "win32",
+  "top_windows": [],
+  "component_count": 0,
+  "components": [],
+  "errors": [
+    "uia backend failed: RuntimeError: 未找到句柄为None，标题包含\"微信收款单\"的顶级UIA窗口.",
+    "win32 backend failed: RuntimeError: No top-level Win32 window found for hwnd=None, title contains \"微信收款单\"."
+  ]
+}
