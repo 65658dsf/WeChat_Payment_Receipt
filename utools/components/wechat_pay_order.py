@@ -11,6 +11,9 @@ class WechatPayOrderComponents:
     create_pay_order_title: str = "创建收款单"
     create_pay_order_button_text: str = "发起收款"
     created_dialog_title: str = "已创建"
+    amount_input_text: str = "金额"
+    description_input_text: str = "收款说明"
+    create_button_text: str = "创建"
     generate_qr_button_text: str = "生成收款码"
     generated_share_title: str = "生成分享图"
     wait_payment_status_text: str = "暂无人付款"
@@ -22,6 +25,8 @@ class WechatPayOrderComponents:
     delete_pay_order_text: str = "删除收款单"
     confirm_delete_pay_order_text: str = "确定删除"
     reenter_mini_program_text: str = "重新进入小程序"
+    return_back_button_texts: tuple[str, ...] = ("返回", "返回上一页")
+    mini_program_menu_texts: tuple[str, ...] = ("更多", "更多功能", "菜单")
     amount_input_x_ratio: float = 0.20
     amount_input_y_ratio: float = 0.21
     description_input_x_ratio: float = 0.32
@@ -67,6 +72,8 @@ class WechatPayOrderComponents:
     after_confirm_delete_wait_seconds: float = 0.30
     after_open_paid_card_wait_seconds: float = 0.30
     after_more_action_wait_seconds: float = 0.20
+    generate_qr_retry_count: int = 3
+    generate_qr_retry_wait_seconds: float = 0.40
 
 
 DEFAULT_PID: Optional[int] = None

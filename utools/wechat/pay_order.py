@@ -19,6 +19,7 @@ from utools.ui.operator import (
     enable_fast_timings,
     find_first_uia_top_window,
     find_uia_click_target,
+    invoke_or_click,
     iter_uia_tree,
     paste_text,
     uia_text_blob,
@@ -93,11 +94,15 @@ def generate_pay_order(
             order_no=order_no,
             output_dir=qr_output_dir,
             timeout_seconds=timeout_seconds,
+            pid=pid,
+            window_title=window_title,
         )
         if return_to_wait_page:
             action_result["return_wait_page"] = return_to_wait_payment_page(
                 root=root,
                 timeout_seconds=timeout_seconds,
+                pid=pid,
+                window_title=window_title,
             )
             if wait_paid_and_close:
                 action_result["payment"] = wait_paid_then_close_pay_order(
@@ -130,8 +135,9 @@ def fill_create_pay_order_fields(root: Any, amount: str, order_no: str) -> Dict[
         str(amount),
     )
 
-    description_point = click_relative(
+    description_point = _click_labeled_input_or_relative(
         root,
+        components.description_input_text,
         components.description_input_x_ratio,
         components.description_input_y_ratio,
     )
@@ -157,10 +163,11 @@ def submit_create_pay_order(root: Any, timeout_seconds: float = 8.0) -> Dict[str
     """点击“创建”，等待已创建弹窗出现."""
 
     components = WECHAT_PAY_ORDER
-    create_point = click_relative(
+    create_point = _click_text_or_relative(
         root,
-        components.create_button_x_ratio,
-        components.create_button_y_ratio,
+        text=components.create_button_text,
+        x_ratio=components.create_button_x_ratio,
+        y_ratio=components.create_button_y_ratio,
     )
     created_root = wait_for_visible_uia_text(
         root=root,
@@ -182,37 +189,60 @@ def generate_and_capture_qr_code(
     order_no: str,
     output_dir: str = "outputs",
     timeout_seconds: float = 8.0,
+    pid: Optional[int] = DEFAULT_PID,
+    window_title: str = DEFAULT_WINDOW_TITLE,
 ) -> Dict[str, Any]:
     """点击“生成收款码”，并裁剪保存中间白色收款码区域."""
 
     components = WECHAT_PAY_ORDER
-    generate_button = find_uia_click_target(
-        root,
-        text=components.generate_qr_button_text,
-        max_depth=10,
-    )
-    if generate_button is not None:
-        generate_button_info = _uia_control_to_info(generate_button, 0, 0, "target")
-        generate_button.click_input()
-        generate_click_point = None
-    else:
-        generate_button_info = None
-        point = click_relative(
-            root,
-            components.generate_qr_button_x_ratio,
-            components.generate_qr_button_y_ratio,
-        )
-        generate_click_point = {"x": point[0], "y": point[1]}
+    retry_count = max(1, components.generate_qr_retry_count)
+    retry_errors: list[str] = []
+    generate_button_info: Optional[Dict[str, Any]] = None
+    generate_click_point: Optional[Dict[str, int]] = None
+    generate_click_method = ""
+    share_root: Any = None
 
-    share_root = wait_for_visible_uia_text(
-        root=root,
-        text=components.generated_share_title,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=components.wait_poll_interval_seconds,
-    )
+    for attempt in range(1, retry_count + 1):
+        try:
+            root = _reacquire_pay_order_root(root, pid, window_title)
+            if uia_tree_has_visible_text(root, components.generated_share_title, max_depth=8):
+                share_root = root
+            else:
+                click_result = _click_generate_qr_button(root)
+                generate_button_info = click_result["button"]
+                generate_click_point = click_result["point"]
+                generate_click_method = click_result["method"]
+                share_root = _wait_for_visible_text_reacquiring(
+                    root=root,
+                    text=components.generated_share_title,
+                    timeout_seconds=timeout_seconds,
+                    pid=pid,
+                    window_title=window_title,
+                )
+
+            if share_root is not None:
+                break
+
+            retry_errors.append(
+                f"第{attempt}次点击后未在{timeout_seconds}秒内进入"
+                f"“{components.generated_share_title}”"
+            )
+        except Exception as exc:
+            retry_errors.append(f"第{attempt}次生成收款码失败: {exc}")
+
+        if attempt < retry_count:
+            print(
+                f"生成收款码第{attempt}次失败，准备重试: {retry_errors[-1]}",
+                flush=True,
+            )
+            time.sleep(components.generate_qr_retry_wait_seconds)
+
     if share_root is None:
+        last_error = retry_errors[-1] if retry_errors else "未知原因"
         raise TimeoutError(
-            f"点击“{components.generate_qr_button_text}”后未在{timeout_seconds}秒内进入“{components.generated_share_title}”."
+            f"点击“{components.generate_qr_button_text}”后未进入"
+            f"“{components.generated_share_title}”，已重试{retry_count}次。"
+            f"最后错误: {last_error}"
         )
 
     output_path = _make_qr_output_path(order_no, output_dir)
@@ -226,8 +256,11 @@ def generate_and_capture_qr_code(
     )
     return {
         "generated": True,
+        "retry_count": retry_count,
+        "retry_errors": retry_errors,
         "button": generate_button_info,
         "generate_click_point": generate_click_point,
+        "generate_click_method": generate_click_method,
         **capture_result,
     }
 
@@ -235,25 +268,30 @@ def generate_and_capture_qr_code(
 def return_to_wait_payment_page(
     root: Any,
     timeout_seconds: float = 8.0,
+    pid: Optional[int] = DEFAULT_PID,
+    window_title: str = DEFAULT_WINDOW_TITLE,
 ) -> Dict[str, Any]:
     """从生成分享图页面返回两次，等待回到主界面订单等待付款状态."""
 
     components = WECHAT_PAY_ORDER
     back_click_points = []
     for _ in range(components.return_back_click_count):
-        point = click_relative(
+        root = _reacquire_pay_order_root(root, pid, window_title)
+        point = _click_any_text_or_relative(
             root,
-            components.return_back_button_x_ratio,
-            components.return_back_button_y_ratio,
+            texts=components.return_back_button_texts,
+            x_ratio=components.return_back_button_x_ratio,
+            y_ratio=components.return_back_button_y_ratio,
         )
         back_click_points.append({"x": point[0], "y": point[1]})
         time.sleep(components.return_back_after_click_wait_seconds)
 
-    wait_root = wait_for_visible_uia_text(
+    wait_root = _wait_for_visible_text_reacquiring(
         root=root,
         text=components.wait_payment_status_text,
         timeout_seconds=timeout_seconds,
-        poll_interval_seconds=components.wait_poll_interval_seconds,
+        pid=pid,
+        window_title=window_title,
     )
     if wait_root is None:
         raise TimeoutError(
@@ -456,10 +494,11 @@ def refresh_wait_payment_page(
 
     components = WECHAT_PAY_ORDER
     root = _reacquire_pay_order_root(root, pid, window_title)
-    menu_point = click_relative(
+    menu_point = _click_any_text_or_relative(
         root,
-        components.mini_program_menu_x_ratio,
-        components.mini_program_menu_y_ratio,
+        texts=components.mini_program_menu_texts,
+        x_ratio=components.mini_program_menu_x_ratio,
+        y_ratio=components.mini_program_menu_y_ratio,
     )
     time.sleep(components.refresh_menu_after_click_wait_seconds)
 
@@ -506,6 +545,23 @@ def wait_order_status_loaded(
         f"重新进入小程序后未在{timeout_seconds}秒内读取到订单状态"
         f"（{WECHAT_PAY_ORDER.wait_payment_status_text}/{WECHAT_PAY_ORDER.paid_status_text}）."
     )
+
+
+def _wait_for_visible_text_reacquiring(
+    root: Any,
+    text: str,
+    timeout_seconds: float,
+    pid: Optional[int] = DEFAULT_PID,
+    window_title: str = DEFAULT_WINDOW_TITLE,
+) -> Optional[Any]:
+    deadline = time.time() + timeout_seconds
+    current_root = root
+    while time.time() < deadline:
+        current_root = _reacquire_pay_order_root(current_root, pid, window_title)
+        if uia_tree_has_visible_text(current_root, text, max_depth=8):
+            return current_root
+        time.sleep(WECHAT_PAY_ORDER.wait_poll_interval_seconds)
+    return None
 
 
 def _reacquire_pay_order_root(
@@ -649,36 +705,175 @@ def _rect_center(rectangle: Dict[str, int]) -> tuple[int, int]:
     )
 
 
-def _click_text_or_relative(
+def _click_generate_qr_button(root: Any) -> Dict[str, Any]:
+    components = WECHAT_PAY_ORDER
+    point, button_info, method = _click_text_or_relative_with_info(
+        root=root,
+        text=components.generate_qr_button_text,
+        x_ratio=components.generate_qr_button_x_ratio,
+        y_ratio=components.generate_qr_button_y_ratio,
+    )
+    return {
+        "button": button_info,
+        "point": {"x": point[0], "y": point[1]},
+        "method": method,
+    }
+
+
+def _click_labeled_input_or_relative(
     root: Any,
-    text: str,
+    label_text: str,
     x_ratio: float,
     y_ratio: float,
 ) -> tuple[int, int]:
-    target = find_uia_click_target(root, text=text, max_depth=10)
+    edit_control = _find_edit_control_near_text(root, label_text)
+    if edit_control is not None:
+        try:
+            point, _info, _method = _click_uia_control_center(edit_control)
+            return point
+        except Exception:
+            pass
+
+    target = find_uia_click_target(root, text=label_text, max_depth=10)
     if target is not None:
-        target_info = _uia_control_to_info(target, 0, 0, "target")
-        rectangle = target_info.get("rectangle") or {}
-        left = int(rectangle.get("left") or 0)
-        top = int(rectangle.get("top") or 0)
-        width = int(rectangle.get("width") or 0)
-        height = int(rectangle.get("height") or 0)
-        if width > 0 and height > 0:
+        target_info = _uia_control_to_info(target, 0, 0, "input-label")
+        control_type = str(target_info.get("control_type") or "")
+        if control_type not in {"Text", "Document"}:
             try:
-                target.click_input()
-                return left + width // 2, top + height // 2
+                point, _info, _method = _click_uia_control_center(target)
+                return point
             except Exception:
                 pass
 
     return click_relative(root, x_ratio, y_ratio)
 
 
+def _find_edit_control_near_text(root: Any, label_text: str) -> Optional[Any]:
+    label_rects = _find_visible_text_rects(root, label_text) if label_text else []
+    candidates: list[tuple[tuple[int, int, int], Any]] = []
+
+    for item, depth in iter_uia_tree(root, max_depth=10):
+        info = _uia_control_to_info(item, 0, depth, "edit-candidate")
+        rectangle = info.get("rectangle") or {}
+        width = int(rectangle.get("width") or 0)
+        height = int(rectangle.get("height") or 0)
+        control_type = str(info.get("control_type") or "")
+        if control_type not in {"Edit", "ComboBox"}:
+            continue
+        if info.get("visible") is False or info.get("enabled") is False:
+            continue
+        if width <= 0 or height <= 0:
+            continue
+
+        score = (10000, width * height, depth)
+        if label_rects:
+            matched_label = False
+            edit_rect = {
+                "left": int(rectangle.get("left") or 0),
+                "top": int(rectangle.get("top") or 0),
+                "right": int(rectangle.get("right") or 0),
+                "bottom": int(rectangle.get("bottom") or 0),
+                "width": width,
+                "height": height,
+            }
+            for label_rect in label_rects:
+                vertical_distance = abs(_rect_center(edit_rect)[1] - _rect_center(label_rect)[1])
+                horizontal_distance = edit_rect["left"] - label_rect["left"]
+                if vertical_distance > 90 or horizontal_distance < -80:
+                    continue
+                score = (
+                    vertical_distance,
+                    abs(horizontal_distance),
+                    depth,
+                )
+                matched_label = True
+                break
+            if not matched_label:
+                continue
+
+        candidates.append((score, item))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _click_any_text_or_relative(
+    root: Any,
+    texts: tuple[str, ...],
+    x_ratio: float,
+    y_ratio: float,
+) -> tuple[int, int]:
+    for text in texts:
+        if not text:
+            continue
+        target = find_uia_click_target(root, text=text, max_depth=10)
+        if target is None:
+            continue
+        try:
+            point, _info, _method = _click_uia_control_center(target)
+            return point
+        except Exception:
+            continue
+
+    return click_relative(root, x_ratio, y_ratio)
+
+
+def _click_text_or_relative(
+    root: Any,
+    text: str,
+    x_ratio: float,
+    y_ratio: float,
+) -> tuple[int, int]:
+    point, _target_info, _method = _click_text_or_relative_with_info(
+        root=root,
+        text=text,
+        x_ratio=x_ratio,
+        y_ratio=y_ratio,
+    )
+    return point
+
+
+def _click_text_or_relative_with_info(
+    root: Any,
+    text: str,
+    x_ratio: float,
+    y_ratio: float,
+) -> tuple[tuple[int, int], Optional[Dict[str, Any]], str]:
+    target = find_uia_click_target(root, text=text, max_depth=10)
+    if target is not None:
+        try:
+            return _click_uia_control_center(target)
+        except Exception:
+            pass
+
+    point = click_relative(root, x_ratio, y_ratio)
+    return point, None, "relative"
+
+
+def _click_uia_control_center(control: Any) -> tuple[tuple[int, int], Dict[str, Any], str]:
+    target_info = _uia_control_to_info(control, 0, 0, "target")
+    rectangle = target_info.get("rectangle") or {}
+    left = int(rectangle.get("left") or 0)
+    top = int(rectangle.get("top") or 0)
+    width = int(rectangle.get("width") or 0)
+    height = int(rectangle.get("height") or 0)
+    if width <= 0 or height <= 0:
+        raise RuntimeError("目标控件矩形无效，无法点击.")
+
+    method = invoke_or_click(control)
+    return (left + width // 2, top + height // 2), target_info, method
+
+
 def _fill_amount_by_keypad(root: Any, amount: str) -> tuple[int, int]:
     components = WECHAT_PAY_ORDER
     _validate_amount_text(amount)
 
-    amount_point = click_relative(
+    amount_point = _click_labeled_input_or_relative(
         root,
+        components.amount_input_text,
         components.amount_input_x_ratio,
         components.amount_input_y_ratio,
     )
@@ -738,7 +933,7 @@ def _open_create_pay_order_page(
 
     button_info = _uia_control_to_info(button, 0, 0, "target")
     try:
-        button.click_input()
+        invoke_or_click(button)
     except Exception as exc:
         raise RuntimeError(f"找到“{create_button_text}”，但点击失败: {exc}") from exc
 

@@ -144,7 +144,10 @@ def click_relative(control: Any, x_ratio: float, y_ratio: float) -> tuple[int, i
 
     x = left + int(width * x_ratio)
     y = top + int(height * y_ratio)
-    mouse.click(button="left", coords=(x, y))
+    try:
+        mouse.click(button="left", coords=(x, y))
+    except RuntimeError as exc:
+        _raise_active_desktop_error(exc)
     return x, y
 
 
@@ -153,8 +156,52 @@ def click_screen_point(x: int, y: int) -> tuple[int, int]:
 
     from pywinauto import mouse  # type: ignore
 
-    mouse.click(button="left", coords=(x, y))
+    try:
+        mouse.click(button="left", coords=(x, y))
+    except RuntimeError as exc:
+        _raise_active_desktop_error(exc)
     return x, y
+
+
+def invoke_or_click(control: Any) -> str:
+    """优先用 UIA InvokePattern 点击控件，失败时才回退到鼠标点击."""
+
+    invoke_error: Exception | None = None
+    try:
+        invoke = getattr(control, "invoke", None)
+        if callable(invoke):
+            invoke()
+            return "invoke"
+    except Exception as exc:
+        invoke_error = exc
+
+    try:
+        iface_invoke = getattr(control, "iface_invoke", None)
+        if iface_invoke is not None:
+            iface_invoke.Invoke()
+            return "iface_invoke"
+    except Exception as exc:
+        invoke_error = exc
+
+    try:
+        control.click_input()
+        return "click_input"
+    except RuntimeError as exc:
+        _raise_active_desktop_error(exc)
+    except Exception as exc:
+        if invoke_error is not None:
+            raise RuntimeError(f"UIA Invoke失败: {invoke_error}; 鼠标点击失败: {exc}") from exc
+        raise
+
+
+def _raise_active_desktop_error(exc: RuntimeError) -> None:
+    message = str(exc)
+    if "active desktop" in message or "SetCursorPos" in message:
+        raise RuntimeError(
+            "当前进程没有可用的活动桌面，无法执行鼠标点击。请在已登录、未锁屏、RDP未断开"
+            "的交互式 Windows 桌面中运行服务；如果用任务计划程序启动，请选择“仅当用户登录时运行”。"
+        ) from exc
+    raise exc
 
 
 def paste_text(
