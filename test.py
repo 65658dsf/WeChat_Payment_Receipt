@@ -13,10 +13,13 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from flask import Flask, jsonify, request
 from werkzeug.serving import make_server
 
+from utools.security.rsa_cipher import verify_encrypted_signature
+
 
 # ===== 测试配置 =====
 PAY_SERVER_CREATE_URL = "http://127.0.0.1:5000/create"
 PUBLIC_KEY_PATH = r"keys\public_key.pem"
+WEBHOOK_PRIVATE_KEY_PATH = r"keys\webhook_private_key.pem"
 
 WEBHOOK_HOST = "127.0.0.1"
 WEBHOOK_PORT = 5001
@@ -41,7 +44,27 @@ def webhook():
     print("收到 webhook:")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    status = ((payload.get("data") or {}).get("trade_status") or "").strip()
+    data = payload.get("data") or {}
+    trade_no = str(data.get("trade_no") or "")
+    total_amount = str(data.get("total_amount") or "")
+    status = str(data.get("trade_status") or "").strip()
+    sign = str(payload.get("sign") or "")
+    expected_sign_text = f"{trade_no}{total_amount}{status}"
+
+    try:
+        sign_ok = verify_encrypted_signature(
+            sign=sign,
+            expected_plaintext=expected_sign_text,
+            private_key_path=WEBHOOK_PRIVATE_KEY_PATH,
+        )
+    except Exception as exc:
+        print(f"webhook sign 解密失败: {exc}", flush=True)
+        return jsonify({"code": 0, "msg": "sign 解密失败"})
+
+    if not sign_ok:
+        print("webhook sign 校验失败", flush=True)
+        return jsonify({"code": 0, "msg": "sign 校验失败"})
+
     if status == "TRADE_SUCCESS":
         print("支付成功", flush=True)
         webhook_received.set()

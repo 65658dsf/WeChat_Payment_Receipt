@@ -42,7 +42,8 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - 为了速度，`amount_clear_backspace_count` 默认是 `0`，表示不预先清空金额。新打开创建页时金额为空，可在 1-2 秒内完成填写；如果反复复用同一个创建页并需要覆盖旧金额，可以把它改成 `8` 或更大。
 - `wait_poll_interval_seconds`、`paste_select_wait_seconds`、`paste_after_wait_seconds` 用于控制等待速度，默认按快速操作配置。
 - Flask 服务启动入口是 `python server.py`。`POST /create` 请求里的 `sign` 是客户端用 `keys/public_key.pem` 加密 `pid+amount+timestamp` 后得到的 base64/base64url 文本；服务端用 `keys/private_key.pem` 解密并比对。
-- `/create` 创建收款单后会先返回二维码 base64；后台线程继续等待支付成功，成功后 POST webhook，并删除本地二维码图片。
+- Webhook 回调使用另一组全新的密钥：服务端用 `keys/webhook_public_key.pem` 加密 `trade_no+total_amount+trade_status` 生成 webhook `sign`；客户端用 `keys/webhook_private_key.pem` 解密并比对。
+- `/create` 创建收款单后会先返回二维码 base64；后台线程继续等待支付成功，成功后 POST 带签名的 webhook，并在 webhook 成功后删除本地二维码图片。
 
 ## 常用入口配置
 

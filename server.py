@@ -16,6 +16,12 @@ DEBUG = False
 # 客户端用 public_key.pem 加密 pid+amount+timestamp，得到 sign。
 PRIVATE_KEY_PATH = r"keys\private_key.pem"
 PUBLIC_KEY_PATH = r"keys\public_key.pem"
+
+# Webhook 回调用全新的密钥对。
+# 服务端用 webhook_public_key.pem 加密 trade_no+total_amount+trade_status。
+# 客户端用 webhook_private_key.pem 解密 webhook 的 sign。
+WEBHOOK_PRIVATE_KEY_PATH = r"keys\webhook_private_key.pem"
+WEBHOOK_PUBLIC_KEY_PATH = r"keys\webhook_public_key.pem"
 AUTO_CREATE_KEYPAIR = True
 
 # 微信收款单窗口配置；None 表示按窗口标题自动查找。
@@ -34,6 +40,8 @@ app = create_app(
     PayServerConfig(
         private_key_path=PRIVATE_KEY_PATH,
         public_key_path=PUBLIC_KEY_PATH,
+        webhook_private_key_path=WEBHOOK_PRIVATE_KEY_PATH,
+        webhook_public_key_path=WEBHOOK_PUBLIC_KEY_PATH,
         auto_create_keypair=AUTO_CREATE_KEYPAIR,
         window_pid=WINDOW_PID,
         window_title=WINDOW_TITLE,

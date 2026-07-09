@@ -48,6 +48,21 @@ def verify_encrypted_signature(
     return hmac.compare_digest(decrypted, expected_plaintext)
 
 
+def encrypt_text_with_public_key(plaintext: str, public_key_path: str) -> str:
+    """用 RSA 公钥加密文本，并返回 base64 密文."""
+
+    public_key = _load_public_key(public_key_path)
+    encrypted = public_key.encrypt(
+        plaintext.encode("utf-8"),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    return base64.b64encode(encrypted).decode("ascii")
+
+
 def decrypt_sign_text(sign: str, private_key_path: str) -> str:
     encrypted = _decode_sign_base64(sign)
     private_key = _load_private_key(private_key_path)
@@ -66,6 +81,11 @@ def decrypt_sign_text(sign: str, private_key_path: str) -> str:
 def _load_private_key(private_key_path: str):
     with open(private_key_path, "rb") as file:
         return serialization.load_pem_private_key(file.read(), password=None)
+
+
+def _load_public_key(public_key_path: str):
+    with open(public_key_path, "rb") as file:
+        return serialization.load_pem_public_key(file.read())
 
 
 def _decode_sign_base64(sign: str) -> bytes:

@@ -109,11 +109,11 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `PayServerConfig` | `.\utools\api\pay_server.py` | Flask 支付服务配置，包含密钥路径、微信窗口标题、输出目录、等待支付超时和 webhook 重试参数。 |
+| `PayServerConfig` | `.\utools\api\pay_server.py` | Flask 支付服务配置，包含创建订单密钥路径、webhook 专用密钥路径、微信窗口标题、输出目录、等待支付超时和 webhook 重试参数。 |
 | `create_app()` | `.\utools\api\pay_server.py` | 创建 Flask app，并注册 `POST /create` 端点。 |
 | `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点内部处理函数：校验 JSON、解密验签、创建收款单、返回二维码 base64，并启动后台等待支付线程。 |
 | `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 后台线程函数，等待支付成功后关闭/删除收款单，发送 webhook，并删除本地二维码图片。 |
-| `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知。 |
+| `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知，并用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`。 |
 | `_validate_create_payload()` | `.\utools\api\pay_server.py` | 校验 `/create` 请求必填参数：`pid`、`amount`、`timestamp`、`webhook`、`sign`。 |
 | `_error()` | `.\utools\api\pay_server.py` | 构建统一错误 JSON。 |
 
@@ -123,4 +123,5 @@
 | --- | --- | --- |
 | `ensure_rsa_keypair()` | `.\utools\security\rsa_cipher.py` | 确保 RSA 私钥/公钥存在；首次启动服务时可自动生成。 |
 | `verify_encrypted_signature()` | `.\utools\security\rsa_cipher.py` | 用服务端私钥解密 `sign`，并与 `pid+amount+timestamp` 做恒定时间比较。 |
+| `encrypt_text_with_public_key()` | `.\utools\security\rsa_cipher.py` | 用 RSA 公钥加密文本并返回 base64 密文；Webhook 签名使用它。 |
 | `decrypt_sign_text()` | `.\utools\security\rsa_cipher.py` | 解密 base64/base64url 的 RSA 密文，支持 OAEP-SHA256、OAEP-SHA1 和 PKCS1v15。 |

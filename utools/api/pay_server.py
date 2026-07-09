@@ -11,7 +11,11 @@ from flask import Flask, jsonify, request
 
 from utools.components.wechat_pay_order import DEFAULT_WINDOW_TITLE
 from utools.io.file_base64 import file_to_base64, remove_file_if_exists
-from utools.security.rsa_cipher import ensure_rsa_keypair, verify_encrypted_signature
+from utools.security.rsa_cipher import (
+    encrypt_text_with_public_key,
+    ensure_rsa_keypair,
+    verify_encrypted_signature,
+)
 from utools.wechat.pay_order import generate_pay_order, wait_paid_then_close_pay_order
 
 
@@ -19,6 +23,8 @@ from utools.wechat.pay_order import generate_pay_order, wait_paid_then_close_pay
 class PayServerConfig:
     private_key_path: str = r"keys\private_key.pem"
     public_key_path: str = r"keys\public_key.pem"
+    webhook_private_key_path: str = r"keys\webhook_private_key.pem"
+    webhook_public_key_path: str = r"keys\webhook_public_key.pem"
     auto_create_keypair: bool = True
     window_pid: Optional[int] = None
     window_title: str = DEFAULT_WINDOW_TITLE
@@ -35,6 +41,7 @@ _ORDER_LOCK = threading.Lock()
 def create_app(config: PayServerConfig) -> Flask:
     if config.auto_create_keypair:
         ensure_rsa_keypair(config.private_key_path, config.public_key_path)
+        ensure_rsa_keypair(config.webhook_private_key_path, config.webhook_public_key_path)
 
     app = Flask(__name__)
 
@@ -129,6 +136,7 @@ def _wait_paid_webhook_and_cleanup(
             webhook=webhook,
             trade_no=trade_no,
             amount=amount,
+            webhook_public_key_path=config.webhook_public_key_path,
             timeout_seconds=config.webhook_timeout_seconds,
             retry_count=config.webhook_retry_count,
         )
@@ -145,18 +153,24 @@ def _post_payment_success_webhook(
     webhook: str,
     trade_no: str,
     amount: str,
+    webhook_public_key_path: str,
     timeout_seconds: float,
     retry_count: int,
 ) -> None:
+    trade_status = "TRADE_SUCCESS"
     body = {
         "code": 1,
         "msg": "success",
         "data": {
             "trade_no": trade_no,
             "total_amount": amount,
-            "trade_status": "TRADE_SUCCESS",
+            "trade_status": trade_status,
         },
     }
+    body["sign"] = encrypt_text_with_public_key(
+        f"{trade_no}{amount}{trade_status}",
+        webhook_public_key_path,
+    )
     last_error: Exception | None = None
     for _ in range(max(1, retry_count)):
         try:
