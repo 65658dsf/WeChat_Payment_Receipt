@@ -18,6 +18,7 @@ from utools.security.rsa_cipher import verify_encrypted_signature
 
 # ===== 测试配置 =====
 PAY_SERVER_CREATE_URL = "http://198.18.0.13:12150/create"
+PAY_SERVER_ESTIMATE_URL = PAY_SERVER_CREATE_URL.rsplit("/", 1)[0] + "/estimate"
 PUBLIC_KEY_PATH = r"keys\public_key.pem"
 WEBHOOK_PRIVATE_KEY_PATH = r"keys\webhook_private_key.pem"
 
@@ -104,9 +105,9 @@ def build_rsa_sign(public_key_path: str, trade_no: str, amount: str, timestamp: 
     return base64.b64encode(encrypted).decode("ascii")
 
 
-def create_order() -> Dict[str, Any]:
+def build_create_payload() -> Dict[str, str]:
     timestamp = str(int(time.time() * 1000))
-    payload = {
+    return {
         "pid": TRADE_NO,
         "amount": AMOUNT,
         "timestamp": timestamp,
@@ -114,36 +115,35 @@ def create_order() -> Dict[str, Any]:
         "sign": build_rsa_sign(PUBLIC_KEY_PATH, TRADE_NO, AMOUNT, timestamp),
     }
 
-    print("发送 /create 请求:")
-    print(json.dumps({**payload, "sign": payload["sign"][:32] + "..."}, ensure_ascii=False, indent=2))
 
-    print(f"请求 URL: {PAY_SERVER_CREATE_URL}")
-    print(f"请求头:")
-    print(json.dumps(dict(requests.utils.default_headers()), ensure_ascii=False, indent=2))
-    
-    response = requests.post(
-        PAY_SERVER_CREATE_URL,
-        json=payload,
-        timeout=CREATE_REQUEST_TIMEOUT_SECONDS,
-    )
-    print(f"/create HTTP {response.status_code}")
-    print(f"响应头:")
-    print(json.dumps(dict(response.headers), ensure_ascii=False, indent=2))
-    print(f"响应内容长度: {len(response.content)} 字节")
-    print(f"响应内容 (原始):")
-    print(repr(response.content))
-    print(f"响应内容 (文本):")
-    print(response.text)
-    
-    try:
-        data = response.json()
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:1200])
-    except Exception:
-        print("响应不是有效的 JSON")
-        raise
-
+def post_json(url: str, payload: Dict[str, str]) -> Dict[str, Any]:
+    response = requests.post(url, json=payload, timeout=CREATE_REQUEST_TIMEOUT_SECONDS)
+    print(f"{url} HTTP {response.status_code}")
+    data = response.json()
+    print(json.dumps(data, ensure_ascii=False, indent=2)[:1200])
     response.raise_for_status()
     return data
+
+
+def create_order() -> Dict[str, Any]:
+    attempt = 0
+    while True:
+        attempt += 1
+        payload = build_create_payload()
+
+        print(f"第 {attempt} 次发送 /create 请求:")
+        print(json.dumps({**payload, "sign": payload["sign"][:32] + "..."}, ensure_ascii=False, indent=2))
+        data = post_json(PAY_SERVER_CREATE_URL, payload)
+        if int(data.get("code") or 0) != 2:
+            return data
+
+        pending = data.get("data") or {}
+        estimate = post_json(PAY_SERVER_ESTIMATE_URL, payload)
+        print("当前预计时间:")
+        print(json.dumps(estimate.get("data") or {}, ensure_ascii=False, indent=2))
+        retry_after = max(1, int(pending.get("retry_after_seconds") or 5))
+        print(f"二维码仍在生成，{retry_after} 秒后重试 /create...")
+        time.sleep(retry_after)
 
 
 def main() -> None:

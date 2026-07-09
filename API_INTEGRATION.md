@@ -116,6 +116,26 @@ XZN2026123540.011698524800000
 
 `pay_qrcode` 是纯 base64 图片数据，不带 `data:image/png;base64,` 前缀。
 
+二维码尚未准备好时会提前返回，HTTP 状态仍为 `200`：
+
+```json
+{
+  "code": 2,
+  "msg": "pending",
+  "data": {
+    "trade_no": "XZN202612354",
+    "status": "CREATING",
+    "ready": false,
+    "queue_position": 0,
+    "estimated_wait_seconds": 6,
+    "retry_after_seconds": 5,
+    "waiting_for_previous_payment": false
+  }
+}
+```
+
+客户端收到 `code=2` 后，应等待 `retry_after_seconds`，然后使用相同订单号重新调用 `/create`。服务端会复用已有任务，不会重复创建收款单。
+
 失败响应示例：
 
 ```json
@@ -128,7 +148,35 @@ XZN2026123540.011698524800000
 
 当前服务一次只操作一个微信收款单流程；如果已有订单正在等待支付，新的 `/create` 请求会进入队列等待。轮到该请求时才会创建收款单并返回二维码，因此排队请求的 HTTP 连接会保持等待状态。
 
+订单开始创建后，服务端会在二维码截图保存和 base64 编码完成后立即返回响应；返回微信主界面、等待支付、Webhook 和图片清理均在后台继续执行。若前面已有未支付订单，排队时间仍可能超过 CDN 的源站响应超时，应为 `/create` 使用直连源站或足够长的代理超时。
+
 如果多次请求使用相同的 `pid`，并且该订单仍在排队、创建中或等待支付中，服务端会直接复用该订单，不会重复创建微信收款单；请求会返回同一个订单号对应的二维码。
+
+### 3.1 预计时间接口
+
+```text
+POST /estimate
+```
+
+请求 JSON 和签名方法与 `/create` 完全相同。该接口不会创建订单，只返回当前订单或新订单的预计状态：
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "trade_no": "XZN202612354",
+    "status": "QUEUED",
+    "ready": false,
+    "queue_position": 1,
+    "estimated_wait_seconds": 15,
+    "retry_after_seconds": 5,
+    "waiting_for_previous_payment": true
+  }
+}
+```
+
+`estimated_wait_seconds` 根据近期创建耗时计算。若 `waiting_for_previous_payment=true`，前一笔订单的实际付款时间不可预测，该值只能作为最短预计时间，客户端应以 `retry_after_seconds` 作为轮询间隔。
 
 ## 4. Python 生成 /create sign 示例
 

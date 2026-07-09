@@ -88,6 +88,44 @@ def uia_text_blob(control: Any) -> str:
     return " ".join(str(part) for part in parts if part)
 
 
+def uia_control_search_info(control: Any) -> dict[str, Any]:
+    """返回用于 UIA 搜索的轻量信息，避免遍历时重复读取子节点和值."""
+
+    element = getattr(control, "element_info", control)
+    rectangle = _safe_get(lambda: element.rectangle)
+    name = _safe_get(lambda: element.name, "")
+    text = "" if name else _safe_method(control, "window_text", "")
+    value = "" if name or text else _safe_method(control, "get_value", "")
+    visible = _safe_get(lambda: element.visible)
+    if visible is None:
+        visible = _safe_method(control, "is_visible")
+    enabled = _safe_get(lambda: element.enabled)
+    if enabled is None:
+        enabled = _safe_method(control, "is_enabled")
+
+    left = int(_safe_get(lambda: rectangle.left, 0) or 0)
+    top = int(_safe_get(lambda: rectangle.top, 0) or 0)
+    right = int(_safe_get(lambda: rectangle.right, 0) or 0)
+    bottom = int(_safe_get(lambda: rectangle.bottom, 0) or 0)
+    return {
+        "name": name,
+        "text": text,
+        "value": value,
+        "text_blob": " ".join(str(part) for part in (name, text, value) if part),
+        "control_type": _safe_get(lambda: element.control_type, ""),
+        "visible": visible,
+        "enabled": enabled,
+        "rectangle": {
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": bottom,
+            "width": max(0, right - left),
+            "height": max(0, bottom - top),
+        },
+    }
+
+
 def find_uia_click_target(
     root: Any,
     text: str,
@@ -96,8 +134,8 @@ def find_uia_click_target(
     candidates: List[tuple[tuple[int, int, int], Any]] = []
 
     for control, depth in iter_uia_tree(root, max_depth):
-        info = _uia_control_to_info(control, 0, depth, "candidate")
-        blob = uia_text_blob(control)
+        info = uia_control_search_info(control)
+        blob = info["text_blob"]
         rectangle = info.get("rectangle") or {}
         width = int(rectangle.get("width") or 0)
         height = int(rectangle.get("height") or 0)
@@ -303,7 +341,7 @@ def wait_for_visible_uia_text(
 
 def uia_tree_has_visible_text(control: Any, text: str, max_depth: Optional[int] = None) -> bool:
     for item, depth in iter_uia_tree(control, max_depth):
-        info = _uia_control_to_info(item, 0, depth, "visible-text")
+        info = uia_control_search_info(item)
         rectangle = info.get("rectangle") or {}
         if info.get("control_type") == "Document":
             continue
@@ -311,6 +349,6 @@ def uia_tree_has_visible_text(control: Any, text: str, max_depth: Optional[int] 
             continue
         if int(rectangle.get("width") or 0) <= 0 or int(rectangle.get("height") or 0) <= 0:
             continue
-        if text in uia_text_blob(item):
+        if text in info["text_blob"]:
             return True
     return False

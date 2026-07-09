@@ -34,6 +34,10 @@ CREATE_TIMEOUT_SECONDS = 8.0
 WAIT_PAID_TIMEOUT_SECONDS: Optional[float] = None
 WEBHOOK_TIMEOUT_SECONDS = 8.0
 WEBHOOK_RETRY_COUNT = 3
+# /create 最多同步等待这么久；未生成二维码时返回 code=2 和建议重试时间。
+CREATE_REQUEST_WAIT_SECONDS = 10.0
+PENDING_RETRY_AFTER_SECONDS = 5
+DEFAULT_CREATE_ESTIMATE_SECONDS = 15.0
 
 
 app = create_app(
@@ -50,6 +54,9 @@ app = create_app(
         wait_paid_timeout_seconds=WAIT_PAID_TIMEOUT_SECONDS,
         webhook_timeout_seconds=WEBHOOK_TIMEOUT_SECONDS,
         webhook_retry_count=WEBHOOK_RETRY_COUNT,
+        create_request_wait_seconds=CREATE_REQUEST_WAIT_SECONDS,
+        pending_retry_after_seconds=PENDING_RETRY_AFTER_SECONDS,
+        default_create_estimate_seconds=DEFAULT_CREATE_ESTIMATE_SECONDS,
     )
 )
 

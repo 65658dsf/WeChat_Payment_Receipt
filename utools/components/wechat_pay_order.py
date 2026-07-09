@@ -59,7 +59,9 @@ class WechatPayOrderComponents:
     qr_card_right_ratio: float = 0.843
     qr_card_bottom_ratio: float = 0.663
     amount_clear_backspace_count: int = 0
+    fast_input_coordinate_mode: bool = True
     wait_poll_interval_seconds: float = 0.05
+    window_reacquire_interval_seconds: float = 0.25
     paste_select_wait_seconds: float = 0.01
     paste_after_wait_seconds: float = 0.02
     return_back_after_click_wait_seconds: float = 0.15
@@ -67,13 +69,10 @@ class WechatPayOrderComponents:
     refresh_menu_after_click_wait_seconds: float = 0.15
     refresh_reenter_after_click_wait_seconds: float = 0.70
     order_status_load_timeout_seconds: float = 8.0
-    after_confirm_close_wait_seconds: float = 0.40
-    after_delete_pay_order_wait_seconds: float = 0.30
-    after_confirm_delete_wait_seconds: float = 0.30
-    after_open_paid_card_wait_seconds: float = 0.30
-    after_more_action_wait_seconds: float = 0.20
+    status_refresh_retry_wait_seconds: float = 0.30
     generate_qr_retry_count: int = 3
-    generate_qr_retry_wait_seconds: float = 0.40
+    generate_qr_page_timeout_seconds: float = 4.0
+    generate_qr_retry_wait_seconds: float = 0.10
 
 
 DEFAULT_PID: Optional[int] = None

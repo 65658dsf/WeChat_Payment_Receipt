@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import threading
+import time
 import traceback
+import math
 from dataclasses import dataclass, field
 from queue import Queue
 from typing import Any, Dict, Optional
@@ -17,7 +19,11 @@ from utools.security.rsa_cipher import (
     ensure_rsa_keypair,
     verify_encrypted_signature,
 )
-from utools.wechat.pay_order import generate_pay_order, wait_paid_then_close_pay_order
+from utools.wechat.pay_order import (
+    generate_pay_order,
+    return_to_wait_payment_page,
+    wait_paid_then_close_pay_order,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,9 @@ class PayServerConfig:
     wait_paid_timeout_seconds: Optional[float] = None
     webhook_timeout_seconds: float = 8.0
     webhook_retry_count: int = 3
+    create_request_wait_seconds: float = 10.0
+    pending_retry_after_seconds: int = 5
+    default_create_estimate_seconds: float = 15.0
 
 
 @dataclass
@@ -45,6 +54,9 @@ class _PayOrderJob:
     response: Optional[Dict[str, Any]] = None
     error: Optional[Exception] = None
     qr_path: str = ""
+    queued_at: float = field(default_factory=time.perf_counter)
+    started_at: float = 0.0
+    state: str = "queued"
 
 
 class _PayOrderQueueWorker:
@@ -53,6 +65,7 @@ class _PayOrderQueueWorker:
         self._queue: Queue[_PayOrderJob] = Queue()
         self._active_jobs: Dict[str, _PayOrderJob] = {}
         self._active_jobs_lock = threading.Lock()
+        self._average_creation_seconds = max(1.0, config.default_create_estimate_seconds)
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -80,6 +93,7 @@ class _PayOrderQueueWorker:
                 self._process_job(job)
             except Exception as exc:
                 job.error = exc
+                job.state = "failed"
                 job.created_event.set()
                 traceback.print_exc()
             finally:
@@ -89,6 +103,13 @@ class _PayOrderQueueWorker:
 
     def _process_job(self, job: _PayOrderJob) -> None:
         qr_path = ""
+        job.state = "creating"
+        job.started_at = time.perf_counter()
+        queue_wait_seconds = round(time.perf_counter() - job.queued_at, 3)
+        print(
+            f"开始创建订单: {job.trade_no}, 队列等待: {queue_wait_seconds}秒",
+            flush=True,
+        )
         try:
             action_result = generate_pay_order(
                 amount=job.amount,
@@ -98,7 +119,7 @@ class _PayOrderQueueWorker:
                 timeout_seconds=self._config.create_timeout_seconds,
                 save_qr_code=True,
                 qr_output_dir=self._config.qr_output_dir,
-                return_to_wait_page=True,
+                return_to_wait_page=False,
                 wait_paid_and_close=False,
             )
             qr_info = action_result.get("qr_code") or {}
@@ -113,11 +134,37 @@ class _PayOrderQueueWorker:
                     "pay_qrcode": pay_qrcode,
                 },
             }
+            creation_seconds = max(0.001, time.perf_counter() - job.started_at)
+            with self._active_jobs_lock:
+                self._average_creation_seconds = (
+                    self._average_creation_seconds * 0.7 + creation_seconds * 0.3
+                )
+                job.state = "waiting_payment"
             job.created_event.set()
+            timings = action_result.get("timings_seconds") or {}
+            print(
+                f"订单二维码已生成并返回: {job.trade_no}, "
+                f"队列等待: {queue_wait_seconds}秒, 分段耗时: {timings}",
+                flush=True,
+            )
         except Exception as exc:
             job.error = exc
             job.created_event.set()
             raise
+
+        try:
+            return_to_wait_payment_page(
+                root=None,
+                order_no=job.trade_no,
+                timeout_seconds=self._config.create_timeout_seconds,
+                pid=self._config.window_pid,
+                window_title=self._config.window_title,
+            )
+        except Exception as exc:
+            print(
+                f"二维码已返回，但自动返回等待付款页面失败，将通过重进小程序恢复: {exc}",
+                flush=True,
+            )
 
         _wait_paid_webhook_and_cleanup(
             config=self._config,
@@ -127,6 +174,69 @@ class _PayOrderQueueWorker:
             qr_path=qr_path,
         )
         self._forget_job(job)
+
+    def estimate(self, trade_no: str) -> Dict[str, Any]:
+        with self._active_jobs_lock:
+            job = self._active_jobs.get(trade_no)
+            active_jobs = list(self._active_jobs.values())
+            average_seconds = self._average_creation_seconds
+
+        retry_after = max(1, int(self._config.pending_retry_after_seconds))
+        if job is None:
+            would_queue = len(active_jobs) > 0
+            return {
+                "trade_no": trade_no,
+                "status": "WOULD_QUEUE" if would_queue else "AVAILABLE",
+                "ready": False,
+                "queue_position": len(active_jobs),
+                "estimated_wait_seconds": int(math.ceil(average_seconds * (len(active_jobs) + 1))),
+                "retry_after_seconds": retry_after,
+                "waiting_for_previous_payment": any(
+                    item.state == "waiting_payment" for item in active_jobs
+                ),
+            }
+
+        if job.response is not None and job.error is None:
+            return {
+                "trade_no": trade_no,
+                "status": "READY",
+                "ready": True,
+                "queue_position": 0,
+                "estimated_wait_seconds": 0,
+                "retry_after_seconds": 0,
+                "waiting_for_previous_payment": False,
+            }
+
+        queue_position = self._queue_position(job)
+        waiting_for_previous_payment = any(
+            item is not job and item.state == "waiting_payment" for item in active_jobs
+        )
+        if job.state == "creating" and job.started_at > 0:
+            elapsed = time.perf_counter() - job.started_at
+            estimated_wait = max(1, int(math.ceil(average_seconds - elapsed)))
+        else:
+            estimated_wait = max(
+                retry_after,
+                int(math.ceil(average_seconds * max(1, queue_position))),
+            )
+
+        return {
+            "trade_no": trade_no,
+            "status": job.state.upper(),
+            "ready": False,
+            "queue_position": queue_position,
+            "estimated_wait_seconds": estimated_wait,
+            "retry_after_seconds": retry_after,
+            "waiting_for_previous_payment": waiting_for_previous_payment,
+        }
+
+    def _queue_position(self, job: _PayOrderJob) -> int:
+        with self._queue.mutex:
+            queued_jobs = list(self._queue.queue)
+        for index, queued_job in enumerate(queued_jobs, start=1):
+            if queued_job is job:
+                return index
+        return 0
 
     def _forget_job(self, job: _PayOrderJob) -> None:
         with self._active_jobs_lock:
@@ -146,38 +256,46 @@ def create_app(config: PayServerConfig) -> Flask:
     @app.post("/create")
     def create_order():
         payload = request.get_json(silent=True) or {}
-        error = _validate_create_payload(payload)
+        verified, error = _verify_create_payload(payload, config)
         if error:
             return jsonify(_error(error)), 400
 
-        trade_no = str(payload["pid"])
-        amount = str(payload["amount"])
-        timestamp = str(payload["timestamp"])
-        webhook = str(payload["webhook"])
-        sign = str(payload["sign"])
-
-        expected_sign_text = f"{trade_no}{amount}{timestamp}"
-        try:
-            sign_ok = verify_encrypted_signature(
-                sign=sign,
-                expected_plaintext=expected_sign_text,
-                private_key_path=config.private_key_path,
-            )
-        except Exception as exc:
-            return jsonify(_error(f"sign 解密失败: {exc}")), 400
-        if not sign_ok:
-            return jsonify(_error("sign 校验失败")), 400
+        trade_no = verified["trade_no"]
+        amount = verified["amount"]
+        webhook = verified["webhook"]
 
         job, reused, queue_size = order_worker.submit(trade_no, amount, webhook)
         if reused:
             print(f"复用已有订单二维码: {trade_no}", flush=True)
         else:
             print(f"订单已进入队列: {trade_no}, 当前队列长度: {queue_size}", flush=True)
-        job.created_event.wait()
+        created = job.created_event.wait(timeout=max(0.1, config.create_request_wait_seconds))
+        if not created:
+            return jsonify(
+                {
+                    "code": 2,
+                    "msg": "pending",
+                    "data": order_worker.estimate(trade_no),
+                }
+            )
 
         if job.error is not None:
             return jsonify(_error(f"创建收款单失败: {job.error}")), 500
         return jsonify(job.response)
+
+    @app.post("/estimate")
+    def estimate_order():
+        payload = request.get_json(silent=True) or {}
+        verified, error = _verify_create_payload(payload, config)
+        if error:
+            return jsonify(_error(error)), 400
+        return jsonify(
+            {
+                "code": 1,
+                "msg": "success",
+                "data": order_worker.estimate(verified["trade_no"]),
+            }
+        )
 
     return app
 
@@ -254,6 +372,37 @@ def _validate_create_payload(payload: Dict[str, Any]) -> str:
         if field not in payload or str(payload[field]).strip() == "":
             return f"缺少参数: {field}"
     return ""
+
+
+def _verify_create_payload(
+    payload: Dict[str, Any],
+    config: PayServerConfig,
+) -> tuple[Optional[Dict[str, str]], str]:
+    error = _validate_create_payload(payload)
+    if error:
+        return None, error
+
+    trade_no = str(payload["pid"])
+    amount = str(payload["amount"])
+    timestamp = str(payload["timestamp"])
+    webhook = str(payload["webhook"])
+    sign = str(payload["sign"])
+    try:
+        sign_ok = verify_encrypted_signature(
+            sign=sign,
+            expected_plaintext=f"{trade_no}{amount}{timestamp}",
+            private_key_path=config.private_key_path,
+        )
+    except Exception as exc:
+        return None, f"sign 解密失败: {exc}"
+    if not sign_ok:
+        return None, "sign 校验失败"
+    return {
+        "trade_no": trade_no,
+        "amount": amount,
+        "timestamp": timestamp,
+        "webhook": webhook,
+    }, ""
 
 
 def _error(message: str) -> Dict[str, Any]:
