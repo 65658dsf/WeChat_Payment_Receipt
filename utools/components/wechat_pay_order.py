@@ -18,6 +18,9 @@ class WechatPayOrderComponents:
     payment_detail_title: str = "收款记录"
     more_action_text: str = "更多操作"
     close_pay_order_text: str = "关闭收款单"
+    confirm_close_pay_order_text: str = "确定关闭"
+    delete_pay_order_text: str = "删除收款单"
+    reenter_mini_program_text: str = "重新进入小程序"
     amount_input_x_ratio: float = 0.20
     amount_input_y_ratio: float = 0.21
     description_input_x_ratio: float = 0.32
@@ -35,6 +38,14 @@ class WechatPayOrderComponents:
     more_action_y_ratio: float = 0.13
     close_pay_order_x_ratio: float = 0.50
     close_pay_order_y_ratio: float = 0.87
+    confirm_close_pay_order_x_ratio: float = 0.66
+    confirm_close_pay_order_y_ratio: float = 0.55
+    delete_pay_order_x_ratio: float = 0.50
+    delete_pay_order_y_ratio: float = 0.87
+    mini_program_menu_x_ratio: float = 0.735
+    mini_program_menu_y_ratio: float = 0.055
+    reenter_mini_program_x_ratio: float = 0.57
+    reenter_mini_program_y_ratio: float = 0.365
     qr_card_left_ratio: float = 0.165
     qr_card_top_ratio: float = 0.247
     qr_card_right_ratio: float = 0.843
@@ -44,9 +55,12 @@ class WechatPayOrderComponents:
     paste_select_wait_seconds: float = 0.01
     paste_after_wait_seconds: float = 0.02
     return_back_after_click_wait_seconds: float = 0.15
-    payment_refresh_key: str = "{F5}"
     payment_refresh_interval_seconds: float = 1.0
-    payment_refresh_after_wait_seconds: float = 0.20
+    refresh_menu_after_click_wait_seconds: float = 0.15
+    refresh_reenter_after_click_wait_seconds: float = 0.70
+    order_status_load_timeout_seconds: float = 8.0
+    after_confirm_close_wait_seconds: float = 0.40
+    after_delete_pay_order_wait_seconds: float = 0.30
     after_open_paid_card_wait_seconds: float = 0.30
     after_more_action_wait_seconds: float = 0.20
 
