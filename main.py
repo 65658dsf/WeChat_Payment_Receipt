@@ -36,6 +36,8 @@ FIND_ONLY = False
 Generator_PayOrder = True
 Generator_PayOrder_Amount = "1.00"
 Generator_PayOrder_OrderNo = "ORDER001"
+Generator_PayOrder_SaveQRCode = True
+Generator_PayOrder_QRCodeOutputDir = r"outputs"
 
 # 需要写入文件时填写路径；None表示不写文件。
 OUTPUT: Optional[str] = r"outputs\output.json"
@@ -58,6 +60,8 @@ def run() -> Dict[str, Any]:
             order_no=Generator_PayOrder_OrderNo,
             pid=PID,
             window_title=WINDOW_TITLE,
+            save_qr_code=Generator_PayOrder_SaveQRCode,
+            qr_output_dir=Generator_PayOrder_QRCodeOutputDir,
         )
         action_pid = action_result.get("pid")
         if isinstance(action_pid, int):

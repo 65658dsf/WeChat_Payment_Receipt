@@ -50,6 +50,13 @@
 | `wait_for_visible_uia_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 在指定窗口内等待可见文本出现。 |
 | `uia_tree_has_visible_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 判断控件树中是否有可见、非 Document、尺寸有效的目标文本。 |
 
+## UI 截图模块
+
+| 函数/类 | 文件地址 | 作用 |
+| --- | --- | --- |
+| `capture_relative_crop()` | `D:\LemonDev\收款单收款\utools\ui\screenshot.py` | 对目标窗口截图，并按相对比例裁剪保存；用于保存收款码白色卡片区域。 |
+| `_get_control_rectangle()` | `D:\LemonDev\收款单收款\utools\ui\screenshot.py` | 获取目标控件矩形，用于截图裁剪计算。 |
+
 ## 微信收款单业务模块
 
 | 函数/类 | 文件地址 | 作用 |
@@ -57,16 +64,19 @@
 | `open_create_pay_order_page()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 自动找到“微信收款单”窗口，点击“发起收款”，等待进入“创建收款单”界面，并返回动作结果。 |
 | `generate_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 自动进入“创建收款单”界面，并把金额填到金额区域、订单号填到“收款说明”。 |
 | `fill_create_pay_order_fields()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 在已打开的创建收款单界面内填写金额和订单号。 |
+| `submit_create_pay_order()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
+| `generate_and_capture_qr_code()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片。 |
 | `_fill_amount_by_keypad()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 点击金额区域后，通过小程序数字键盘坐标输入金额。 |
 | `_validate_amount_text()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 校验金额只能包含数字和一个小数点，并且至少包含一个数字。 |
 | `_open_create_pay_order_page()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 内部函数，返回创建收款单页面根控件和动作结果。 |
 | `_require_non_empty()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 校验金额、订单号等必填参数不为空。 |
+| `_make_qr_output_path()` | `D:\LemonDev\收款单收款\utools\wechat\pay_order.py` | 根据订单号生成安全的收款码截图文件路径。 |
 
 ## 组件常量模块
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页标题、发起收款按钮文案、金额/说明输入区域的窗口相对坐标，以及快速模式等待参数。 |
+| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页/已创建/分享图标题、按钮文案、输入/创建/生成收款码/裁剪区域的窗口相对坐标，以及快速模式等待参数。 |
 | `DEFAULT_PID` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |

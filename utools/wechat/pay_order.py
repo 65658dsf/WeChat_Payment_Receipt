@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+import re
 from typing import Any, Dict, Optional
 
 from utools.components.wechat_pay_order import (
@@ -8,6 +10,7 @@ from utools.components.wechat_pay_order import (
     DEFAULT_WINDOW_TITLE,
     WECHAT_PAY_ORDER,
 )
+from utools.ui.screenshot import capture_relative_crop
 from utools.ui.inspector import _safe_get, _safe_method, _uia_control_to_info
 from utools.ui.operator import (
     click_relative,
@@ -57,8 +60,10 @@ def generate_pay_order(
     pid: Optional[int] = DEFAULT_PID,
     window_title: str = DEFAULT_WINDOW_TITLE,
     timeout_seconds: float = 8.0,
+    save_qr_code: bool = True,
+    qr_output_dir: str = "outputs",
 ) -> Dict[str, Any]:
-    """打开“创建收款单”界面，并填写金额和订单号."""
+    """打开“创建收款单”界面，填写金额/订单号，并保存收款码图片."""
 
     enable_fast_timings()
     _require_non_empty(amount, "金额")
@@ -74,7 +79,15 @@ def generate_pay_order(
         amount=amount,
         order_no=order_no,
     )
-    action_result["message"] = "已进入“创建收款单”界面，并填写金额和订单号."
+    action_result["created"] = submit_create_pay_order(root, timeout_seconds)
+    if save_qr_code:
+        action_result["qr_code"] = generate_and_capture_qr_code(
+            root=root,
+            order_no=order_no,
+            output_dir=qr_output_dir,
+            timeout_seconds=timeout_seconds,
+        )
+    action_result["message"] = "已创建收款单，并生成收款码截图."
     return action_result
 
 
@@ -109,6 +122,85 @@ def fill_create_pay_order_fields(root: Any, amount: str, order_no: str) -> Dict[
             "x": description_point[0],
             "y": description_point[1],
         },
+    }
+
+
+def submit_create_pay_order(root: Any, timeout_seconds: float = 8.0) -> Dict[str, Any]:
+    """点击“创建”，等待已创建弹窗出现."""
+
+    components = WECHAT_PAY_ORDER
+    create_point = click_relative(
+        root,
+        components.create_button_x_ratio,
+        components.create_button_y_ratio,
+    )
+    created_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.created_dialog_title,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if created_root is None:
+        raise TimeoutError(f"点击创建后未在{timeout_seconds}秒内看到“{components.created_dialog_title}”.")
+
+    return {
+        "created": True,
+        "create_click_point": {"x": create_point[0], "y": create_point[1]},
+    }
+
+
+def generate_and_capture_qr_code(
+    root: Any,
+    order_no: str,
+    output_dir: str = "outputs",
+    timeout_seconds: float = 8.0,
+) -> Dict[str, Any]:
+    """点击“生成收款码”，并裁剪保存中间白色收款码区域."""
+
+    components = WECHAT_PAY_ORDER
+    generate_button = find_uia_click_target(
+        root,
+        text=components.generate_qr_button_text,
+        max_depth=10,
+    )
+    if generate_button is not None:
+        generate_button_info = _uia_control_to_info(generate_button, 0, 0, "target")
+        generate_button.click_input()
+        generate_click_point = None
+    else:
+        generate_button_info = None
+        point = click_relative(
+            root,
+            components.generate_qr_button_x_ratio,
+            components.generate_qr_button_y_ratio,
+        )
+        generate_click_point = {"x": point[0], "y": point[1]}
+
+    share_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.generated_share_title,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if share_root is None:
+        raise TimeoutError(
+            f"点击“{components.generate_qr_button_text}”后未在{timeout_seconds}秒内进入“{components.generated_share_title}”."
+        )
+
+    output_path = _make_qr_output_path(order_no, output_dir)
+    capture_result = capture_relative_crop(
+        control=share_root,
+        output_path=output_path,
+        left_ratio=components.qr_card_left_ratio,
+        top_ratio=components.qr_card_top_ratio,
+        right_ratio=components.qr_card_right_ratio,
+        bottom_ratio=components.qr_card_bottom_ratio,
+    )
+    return {
+        "generated": True,
+        "button": generate_button_info,
+        "generate_click_point": generate_click_point,
+        **capture_result,
     }
 
 
@@ -203,3 +295,10 @@ def _open_create_pay_order_page(
 def _require_non_empty(value: str, label: str) -> None:
     if str(value).strip() == "":
         raise ValueError(f"{label}不能为空.")
+
+
+def _make_qr_output_path(order_no: str, output_dir: str) -> str:
+    safe_order_no = re.sub(r'[<>:"/\\|?*\s]+', "_", str(order_no)).strip("._")
+    if not safe_order_no:
+        safe_order_no = "pay_order"
+    return os.path.join(output_dir, f"收款码_{safe_order_no}.png")
