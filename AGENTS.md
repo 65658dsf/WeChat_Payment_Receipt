@@ -32,6 +32,8 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - 不要把业务动作堆进 `main.py`；`main.py` 只保留配置和调用顺序。
 - 如果后续新增动作，例如填写金额、填写说明、点击创建，请优先新增到 `utools/wechat/pay_order.py`，底层通用控件查找能力复用 `utools/ui/operator.py`。
 - 当前微信小程序页面内的金额/说明输入框不稳定暴露为标准 `Edit` 控件。金额通过窗口相对坐标点击小程序数字键盘输入；订单号通过窗口相对坐标点击“收款说明”后剪贴板粘贴。输入区域坐标比例维护在 `utools/components/wechat_pay_order.py`。
+- 为了速度，`amount_clear_backspace_count` 默认是 `0`，表示不预先清空金额。新打开创建页时金额为空，可在 1-2 秒内完成填写；如果反复复用同一个创建页并需要覆盖旧金额，可以把它改成 `8` 或更大。
+- `wait_poll_interval_seconds`、`paste_select_wait_seconds`、`paste_after_wait_seconds` 用于控制等待速度，默认按快速操作配置。
 
 ## 常用入口配置
 

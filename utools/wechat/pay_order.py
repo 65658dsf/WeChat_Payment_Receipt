@@ -11,6 +11,7 @@ from utools.components.wechat_pay_order import (
 from utools.ui.inspector import _safe_get, _safe_method, _uia_control_to_info
 from utools.ui.operator import (
     click_relative,
+    enable_fast_timings,
     find_first_uia_top_window,
     find_uia_click_target,
     paste_text,
@@ -59,6 +60,7 @@ def generate_pay_order(
 ) -> Dict[str, Any]:
     """打开“创建收款单”界面，并填写金额和订单号."""
 
+    enable_fast_timings()
     _require_non_empty(amount, "金额")
     _require_non_empty(order_no, "订单号")
 
@@ -79,6 +81,7 @@ def generate_pay_order(
 def fill_create_pay_order_fields(root: Any, amount: str, order_no: str) -> Dict[str, Any]:
     """填写创建收款单界面的金额和收款说明."""
 
+    enable_fast_timings()
     components = WECHAT_PAY_ORDER
 
     amount_point = _fill_amount_by_keypad(
@@ -91,7 +94,12 @@ def fill_create_pay_order_fields(root: Any, amount: str, order_no: str) -> Dict[
         components.description_input_x_ratio,
         components.description_input_y_ratio,
     )
-    paste_text(str(order_no), clear_existing=True)
+    paste_text(
+        str(order_no),
+        clear_existing=True,
+        select_wait_seconds=components.paste_select_wait_seconds,
+        after_wait_seconds=components.paste_after_wait_seconds,
+    )
 
     return {
         "amount": str(amount),
@@ -114,7 +122,7 @@ def _fill_amount_by_keypad(root: Any, amount: str) -> tuple[int, int]:
         components.amount_input_y_ratio,
     )
 
-    for _ in range(16):
+    for _ in range(components.amount_clear_backspace_count):
         click_relative(root, *AMOUNT_KEYPAD_BACKSPACE)
 
     for char in amount:
@@ -141,6 +149,7 @@ def _open_create_pay_order_page(
 ) -> tuple[Any, Dict[str, Any]]:
     from pywinauto import Desktop  # type: ignore
 
+    enable_fast_timings()
     desktop = Desktop(backend="uia")
     root = find_first_uia_top_window(desktop, pid, window_title)
     root_info = _uia_control_to_info(root, 0, 0, "0")
@@ -176,6 +185,7 @@ def _open_create_pay_order_page(
         root=root,
         text=create_title,
         timeout_seconds=timeout_seconds,
+        poll_interval_seconds=WECHAT_PAY_ORDER.wait_poll_interval_seconds,
     )
     if opened_root is None:
         raise TimeoutError(f"点击后未在{timeout_seconds}秒内进入“{create_title}”界面.")

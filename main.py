@@ -33,9 +33,9 @@ INCLUDE_HIDDEN = True
 FIND_ONLY = False
 
 # True时自动点击“发起收款”，进入“创建收款单”界面，填写金额和订单号后再采集组件信息。
-Generator_PayOrder = False
-Generator_PayOrder_Amount = ""
-Generator_PayOrder_OrderNo = ""
+Generator_PayOrder = True
+Generator_PayOrder_Amount = "1.00"
+Generator_PayOrder_OrderNo = "ORDER001"
 
 # 需要写入文件时填写路径；None表示不写文件。
 OUTPUT: Optional[str] = r"outputs\output.json"
@@ -86,7 +86,4 @@ def run() -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-
-    output_json_result(run(), OUTPUT)
+    run()

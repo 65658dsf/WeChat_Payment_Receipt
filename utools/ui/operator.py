@@ -14,6 +14,20 @@ from utools.ui.inspector import (
 )
 
 
+def enable_fast_timings() -> None:
+    """降低 pywinauto 默认动作等待时间."""
+
+    try:
+        from pywinauto.timings import Timings  # type: ignore
+
+        Timings.fast()
+        Timings.after_clickinput_wait = 0.01
+        Timings.after_setfocus_wait = 0.01
+        Timings.after_sendkeys_key_wait = 0.001
+    except Exception:
+        return
+
+
 def find_first_uia_top_window(
     desktop: Any,
     pid: Optional[int],
@@ -134,7 +148,12 @@ def click_relative(control: Any, x_ratio: float, y_ratio: float) -> tuple[int, i
     return x, y
 
 
-def paste_text(text: str, clear_existing: bool = True) -> None:
+def paste_text(
+    text: str,
+    clear_existing: bool = True,
+    select_wait_seconds: float = 0.01,
+    after_wait_seconds: float = 0.02,
+) -> None:
     """使用 Windows 剪贴板向当前焦点控件粘贴文本."""
 
     from pywinauto import keyboard  # type: ignore
@@ -142,9 +161,9 @@ def paste_text(text: str, clear_existing: bool = True) -> None:
     set_clipboard_text(text)
     if clear_existing:
         keyboard.send_keys("^a")
-        time.sleep(0.05)
+        time.sleep(select_wait_seconds)
     keyboard.send_keys("^v")
-    time.sleep(0.1)
+    time.sleep(after_wait_seconds)
 
 
 def set_clipboard_text(text: str) -> None:
@@ -206,12 +225,13 @@ def wait_for_visible_uia_text(
     root: Any,
     text: str,
     timeout_seconds: float,
+    poll_interval_seconds: float = 0.05,
 ) -> Optional[Any]:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         if uia_tree_has_visible_text(root, text, max_depth=8):
             return root
-        time.sleep(0.2)
+        time.sleep(poll_interval_seconds)
     return None
 
 

@@ -43,6 +43,7 @@
 | `iter_uia_tree()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 以栈方式遍历 UIA 控件树。 |
 | `uia_text_blob()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 汇总控件的 name、window_text、value，作为查找文本。 |
 | `find_uia_click_target()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 按文本查找最合适的可点击控件，优先 Button、精确文本、小面积控件。 |
+| `enable_fast_timings()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 降低 pywinauto 默认动作等待时间，用于加快点击、聚焦、键盘输入。 |
 | `click_relative()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 按控件矩形相对坐标点击，适合小程序内部不暴露标准控件的区域；金额数字键盘依赖它。 |
 | `paste_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 用剪贴板向当前焦点控件粘贴文本，可选择先全选清空；订单号填写依赖它。 |
 | `set_clipboard_text()` | `D:\LemonDev\收款单收款\utools\ui\operator.py` | 使用 Windows Unicode 剪贴板 API 写入文本。 |
@@ -65,7 +66,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页标题、发起收款按钮文案，以及金额/说明输入区域的窗口相对坐标。 |
+| `WechatPayOrderComponents` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页标题、发起收款按钮文案、金额/说明输入区域的窗口相对坐标，以及快速模式等待参数。 |
 | `DEFAULT_PID` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `D:\LemonDev\收款单收款\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |
