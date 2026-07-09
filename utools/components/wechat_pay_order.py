@@ -20,6 +20,7 @@ class WechatPayOrderComponents:
     close_pay_order_text: str = "关闭收款单"
     confirm_close_pay_order_text: str = "确定关闭"
     delete_pay_order_text: str = "删除收款单"
+    confirm_delete_pay_order_text: str = "确定删除"
     reenter_mini_program_text: str = "重新进入小程序"
     amount_input_x_ratio: float = 0.20
     amount_input_y_ratio: float = 0.21
@@ -42,6 +43,8 @@ class WechatPayOrderComponents:
     confirm_close_pay_order_y_ratio: float = 0.55
     delete_pay_order_x_ratio: float = 0.50
     delete_pay_order_y_ratio: float = 0.87
+    confirm_delete_pay_order_x_ratio: float = 0.66
+    confirm_delete_pay_order_y_ratio: float = 0.55
     mini_program_menu_x_ratio: float = 0.735
     mini_program_menu_y_ratio: float = 0.055
     reenter_mini_program_x_ratio: float = 0.57
@@ -61,6 +64,7 @@ class WechatPayOrderComponents:
     order_status_load_timeout_seconds: float = 8.0
     after_confirm_close_wait_seconds: float = 0.40
     after_delete_pay_order_wait_seconds: float = 0.30
+    after_confirm_delete_wait_seconds: float = 0.30
     after_open_paid_card_wait_seconds: float = 0.30
     after_more_action_wait_seconds: float = 0.20
 

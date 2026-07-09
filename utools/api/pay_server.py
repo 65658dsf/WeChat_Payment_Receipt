@@ -115,6 +115,7 @@ def _wait_paid_webhook_and_cleanup(
     webhook: str,
     qr_path: str,
 ) -> None:
+    webhook_sent = False
     try:
         wait_paid_then_close_pay_order(
             root=None,
@@ -131,13 +132,13 @@ def _wait_paid_webhook_and_cleanup(
             timeout_seconds=config.webhook_timeout_seconds,
             retry_count=config.webhook_retry_count,
         )
+        webhook_sent = True
     except Exception:
         traceback.print_exc()
     finally:
-        try:
+        if webhook_sent:
             remove_file_if_exists(qr_path)
-        finally:
-            _ORDER_LOCK.release()
+        _ORDER_LOCK.release()
 
 
 def _post_payment_success_webhook(

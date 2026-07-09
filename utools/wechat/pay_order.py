@@ -403,6 +403,23 @@ def wait_paid_then_close_pay_order(
     )
     time.sleep(components.after_delete_pay_order_wait_seconds)
 
+    confirm_delete_root = wait_for_visible_uia_text(
+        root=root,
+        text=components.confirm_delete_pay_order_text,
+        timeout_seconds=8.0,
+        poll_interval_seconds=components.wait_poll_interval_seconds,
+    )
+    if confirm_delete_root is None:
+        raise TimeoutError(f"点击删除收款单后未看到“{components.confirm_delete_pay_order_text}”.")
+
+    confirm_delete_point = _click_text_or_relative(
+        root,
+        text=components.confirm_delete_pay_order_text,
+        x_ratio=components.confirm_delete_pay_order_x_ratio,
+        y_ratio=components.confirm_delete_pay_order_y_ratio,
+    )
+    time.sleep(components.after_confirm_delete_wait_seconds)
+
     return {
         "paid": True,
         "closed": True,
@@ -422,6 +439,10 @@ def wait_paid_then_close_pay_order(
             "y": more_action_after_close_point[1],
         },
         "delete_click_point": {"x": delete_point[0], "y": delete_point[1]},
+        "confirm_delete_click_point": {
+            "x": confirm_delete_point[0],
+            "y": confirm_delete_point[1],
+        },
     }
 
 

@@ -70,7 +70,7 @@
 | `submit_create_pay_order()` | `.\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
 | `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片。 |
 | `return_to_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 在收款码截图保存后点击左上角返回两次，并等待主界面出现“暂无人付款”。 |
-| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面每秒通过“重新进入小程序”刷新；每次刷新后先等待目标订单读到“暂无人付款”或“已支付”，已支付后点击订单卡片进入“收款记录”，再点击“更多操作”和“关闭收款单”，确认关闭后再次点击“更多操作”并删除收款单。 |
+| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面每秒通过“重新进入小程序”刷新；每次刷新后先等待目标订单读到“暂无人付款”或“已支付”，已支付后点击订单卡片进入“收款记录”，再点击“更多操作”和“关闭收款单”，确认关闭后再次点击“更多操作”并删除收款单，最后确认删除。 |
 | `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；刷新后等待订单状态加载完成并返回重新获取到的窗口对象。 |
 | `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出目标订单的明确状态，状态必须是“暂无人付款”或“已支付”。 |
 | `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，按窗口标题重新获取当前可用 UIA 顶级窗口；PID 失效时回退为按标题查找。 |
@@ -92,7 +92,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页/已创建/分享图/已支付/收款记录标题、按钮文案、输入/创建/生成收款码/返回/订单卡片/小程序菜单/重新进入小程序/更多操作/关闭收款单/确定关闭/删除收款单/裁剪区域的窗口相对坐标，以及快速模式等待参数。 |
+| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、创建页/已创建/分享图/已支付/收款记录标题、按钮文案、输入/创建/生成收款码/返回/订单卡片/小程序菜单/重新进入小程序/更多操作/关闭收款单/确定关闭/删除收款单/确定删除/裁剪区域的窗口相对坐标，以及快速模式等待参数。 |
 | `DEFAULT_PID` | `.\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `.\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `.\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |
