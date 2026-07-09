@@ -17,7 +17,7 @@ from utools.security.rsa_cipher import verify_encrypted_signature
 
 
 # ===== 测试配置 =====
-PAY_SERVER_CREATE_URL = "http://127.0.0.1:5000/create"
+PAY_SERVER_CREATE_URL = "http://198.18.0.13:12150/create"
 PUBLIC_KEY_PATH = r"keys\public_key.pem"
 WEBHOOK_PRIVATE_KEY_PATH = r"keys\webhook_private_key.pem"
 
@@ -117,19 +117,31 @@ def create_order() -> Dict[str, Any]:
     print("发送 /create 请求:")
     print(json.dumps({**payload, "sign": payload["sign"][:32] + "..."}, ensure_ascii=False, indent=2))
 
+    print(f"请求 URL: {PAY_SERVER_CREATE_URL}")
+    print(f"请求头:")
+    print(json.dumps(dict(requests.utils.default_headers()), ensure_ascii=False, indent=2))
+    
     response = requests.post(
         PAY_SERVER_CREATE_URL,
         json=payload,
         timeout=CREATE_REQUEST_TIMEOUT_SECONDS,
     )
     print(f"/create HTTP {response.status_code}")
+    print(f"响应头:")
+    print(json.dumps(dict(response.headers), ensure_ascii=False, indent=2))
+    print(f"响应内容长度: {len(response.content)} 字节")
+    print(f"响应内容 (原始):")
+    print(repr(response.content))
+    print(f"响应内容 (文本):")
+    print(response.text)
+    
     try:
         data = response.json()
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:1200])
     except Exception:
-        print(response.text)
+        print("响应不是有效的 JSON")
         raise
 
-    print(json.dumps(data, ensure_ascii=False, indent=2)[:1200])
     response.raise_for_status()
     return data
 
