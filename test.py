@@ -70,8 +70,16 @@ def webhook():
         print("支付成功", flush=True)
         webhook_received.set()
         return jsonify({"code": 1, "msg": "success"})
+    if status == "TRADE_FAILED":
+        print("支付失败，可重新打开订单", flush=True)
+        webhook_received.set()
+        return jsonify({"code": 1, "msg": "payment_failed"})
+    if status == "TRADE_ERROR":
+        print("订单状态异常，可重新打开订单", flush=True)
+        webhook_received.set()
+        return jsonify({"code": 1, "msg": "order_status_error"})
 
-    return jsonify({"code": 0, "msg": "非支付成功状态"})
+    return jsonify({"code": 0, "msg": "未知支付状态"})
 
 
 class LocalWebhookServer:

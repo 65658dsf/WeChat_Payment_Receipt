@@ -16,22 +16,19 @@ def capture_relative_crop(
     top_ratio: float,
     right_ratio: float,
     bottom_ratio: float,
+    dark_pixel_threshold: int = 96,
 ) -> Dict[str, Any]:
     """截图控件区域，并按相对比例裁剪保存."""
 
-    rectangle = _get_control_rectangle(control)
-    left = rectangle["left"]
-    top = rectangle["top"]
-    width = rectangle["width"]
-    height = rectangle["height"]
-
-    crop_box = (
-        left + int(width * left_ratio),
-        top + int(height * top_ratio),
-        left + int(width * right_ratio),
-        top + int(height * bottom_ratio),
+    crop_box = _get_relative_crop_box(
+        control,
+        left_ratio,
+        top_ratio,
+        right_ratio,
+        bottom_ratio,
     )
     image = ImageGrab.grab(bbox=crop_box)
+    visual_metrics = analyze_image_visual_metrics(image, dark_pixel_threshold)
 
     output_dir = os.path.dirname(output_path)
     if output_dir:
@@ -40,14 +37,54 @@ def capture_relative_crop(
 
     return {
         "output_path": output_path,
-        "crop_box": {
-            "left": crop_box[0],
-            "top": crop_box[1],
-            "right": crop_box[2],
-            "bottom": crop_box[3],
-            "width": crop_box[2] - crop_box[0],
-            "height": crop_box[3] - crop_box[1],
-        },
+        "crop_box": _crop_box_to_dict(crop_box),
+        "visual_metrics": visual_metrics,
+    }
+
+
+def inspect_relative_crop_visual_metrics(
+    control: Any,
+    left_ratio: float,
+    top_ratio: float,
+    right_ratio: float,
+    bottom_ratio: float,
+    dark_pixel_threshold: int = 96,
+) -> Dict[str, Any]:
+    """读取相对裁剪区视觉指标但不保存图片，用于等待动态内容加载完成."""
+
+    crop_box = _get_relative_crop_box(
+        control,
+        left_ratio,
+        top_ratio,
+        right_ratio,
+        bottom_ratio,
+    )
+    image = ImageGrab.grab(bbox=crop_box)
+    return {
+        "crop_box": _crop_box_to_dict(crop_box),
+        **analyze_image_visual_metrics(image, dark_pixel_threshold),
+    }
+
+
+def analyze_image_visual_metrics(
+    image: Any,
+    dark_pixel_threshold: int = 96,
+) -> Dict[str, Any]:
+    """统计图片暗色像素占比；二维码比加载占位具有明显更高的暗色密度."""
+
+    threshold = max(1, min(254, int(dark_pixel_threshold)))
+    grayscale = image.convert("L")
+    histogram = grayscale.histogram()
+    total_pixels = sum(histogram)
+    if total_pixels <= 0:
+        raise ValueError("图片像素为空，无法计算视觉指标.")
+    dark_pixels = sum(histogram[: threshold + 1])
+    mean_grayscale = sum(index * count for index, count in enumerate(histogram)) / total_pixels
+    return {
+        "dark_pixel_threshold": threshold,
+        "dark_pixel_ratio": round(dark_pixels / total_pixels, 6),
+        "mean_grayscale": round(mean_grayscale, 3),
+        "total_pixels": total_pixels,
     }
 
 
@@ -119,4 +156,38 @@ def _get_control_rectangle(control: Any) -> Dict[str, int]:
         "top": int(rectangle["top"]),
         "width": int(rectangle["width"]),
         "height": int(rectangle["height"]),
+    }
+
+
+def _get_relative_crop_box(
+    control: Any,
+    left_ratio: float,
+    top_ratio: float,
+    right_ratio: float,
+    bottom_ratio: float,
+) -> tuple[int, int, int, int]:
+    rectangle = _get_control_rectangle(control)
+    left = rectangle["left"]
+    top = rectangle["top"]
+    width = rectangle["width"]
+    height = rectangle["height"]
+    crop_box = (
+        left + int(width * left_ratio),
+        top + int(height * top_ratio),
+        left + int(width * right_ratio),
+        top + int(height * bottom_ratio),
+    )
+    if crop_box[2] <= crop_box[0] or crop_box[3] <= crop_box[1]:
+        raise RuntimeError("相对截图区域无效，无法裁剪.")
+    return crop_box
+
+
+def _crop_box_to_dict(crop_box: tuple[int, int, int, int]) -> Dict[str, int]:
+    return {
+        "left": crop_box[0],
+        "top": crop_box[1],
+        "right": crop_box[2],
+        "bottom": crop_box[3],
+        "width": crop_box[2] - crop_box[0],
+        "height": crop_box[3] - crop_box[1],
     }

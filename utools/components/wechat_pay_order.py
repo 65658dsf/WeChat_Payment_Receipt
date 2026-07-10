@@ -79,6 +79,7 @@ class WechatPayOrderComponents:
     refresh_menu_after_click_wait_seconds: float = 0.15
     refresh_reenter_after_click_wait_seconds: float = 0.70
     order_status_load_timeout_seconds: float = 8.0
+    order_status_uia_max_depth: int = 16
     status_refresh_retry_wait_seconds: float = 0.30
     max_payment_refresh_count: int = 5
     payment_detail_click_wait_seconds: float = 0.25
@@ -91,6 +92,11 @@ class WechatPayOrderComponents:
     generate_qr_retry_count: int = 3
     generate_qr_page_timeout_seconds: float = 4.0
     generate_qr_retry_wait_seconds: float = 0.10
+    generate_qr_render_timeout_seconds: float = 8.0
+    generate_qr_render_poll_interval_seconds: float = 0.20
+    generate_qr_ready_dark_pixel_threshold: int = 96
+    generate_qr_ready_min_dark_pixel_ratio: float = 0.02
+    generate_qr_ready_consecutive_samples: int = 2
 
 
 DEFAULT_PID: Optional[int] = None

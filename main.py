@@ -33,7 +33,7 @@ INCLUDE_HIDDEN = True
 FIND_ONLY = False
 
 # True时自动点击“发起收款”，进入“创建收款单”界面，填写金额和订单号后再采集组件信息。
-Generator_PayOrder = True
+Generator_PayOrder = False
 Generator_PayOrder_Amount = "0.01"
 Generator_PayOrder_OrderNo = "ORDER001"
 Generator_PayOrder_SaveQRCode = True
@@ -91,9 +91,9 @@ def run() -> Dict[str, Any]:
 
     if action_result is not None:
         result["actions"] = {"Generator_PayOrder": action_result}
-
     return result
 
 
 if __name__ == "__main__":
-    run()
+    result = run()
+    output_json_result(result, OUTPUT)

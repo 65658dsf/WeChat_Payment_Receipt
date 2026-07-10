@@ -61,10 +61,14 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `capture_relative_crop()` | `.\utools\ui\screenshot.py` | 对目标窗口截图，并按相对比例裁剪保存；用于保存收款码白色卡片区域。 |
+| `capture_relative_crop()` | `.\utools\ui\screenshot.py` | 对目标窗口截图并按相对比例裁剪保存，同时返回暗色像素占比等最终图片视觉指标。 |
+| `inspect_relative_crop_visual_metrics()` | `.\utools\ui\screenshot.py` | 截取相对区域但不保存，返回暗色像素占比和平均灰度，用于等待二维码动态内容加载。 |
+| `analyze_image_visual_metrics()` | `.\utools\ui\screenshot.py` | 统计 PIL 图片的暗色像素占比、平均灰度和像素数。 |
 | `capture_control_visual_probe()` | `.\utools\ui\screenshot.py` | 截取目标窗口并缩小为灰度像素探针，用于低开销判断点击前后页面是否明显变化。 |
 | `compare_control_visual_probes()` | `.\utools\ui\screenshot.py` | 比较两个视觉探针，返回超过像素差阈值的变化像素比例。 |
 | `_get_control_rectangle()` | `.\utools\ui\screenshot.py` | 获取目标控件矩形，用于截图裁剪计算。 |
+| `_get_relative_crop_box()` | `.\utools\ui\screenshot.py` | 根据窗口矩形和相对比例计算有效裁剪框。 |
+| `_crop_box_to_dict()` | `.\utools\ui\screenshot.py` | 将裁剪框转换为可序列化的矩形字典。 |
 
 ## 微信收款单业务模块
 
@@ -74,11 +78,12 @@
 | `generate_pay_order()` | `.\utools\wechat\pay_order.py` | 自动进入创建页、填写金额/订单号并保存收款码；返回各阶段和总耗时。可选择是否继续返回主界面、等待支付并关闭收款单。 |
 | `fill_create_pay_order_fields()` | `.\utools\wechat\pay_order.py` | 在已打开的创建收款单界面内填写金额和订单号。 |
 | `submit_create_pay_order()` | `.\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
-| `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片；默认先按 UIA 元素查找按钮，点击后未进入“生成分享图”会重新获取窗口并按配置重试。 |
+| `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后等待二维码纹理连续两帧达到阈值，保存后再次复检；占位图会删除并按配置重试。 |
+| `_wait_for_qr_card_ready()` | `.\utools\wechat\pay_order.py` | 轮询二维码裁剪区视觉指标，只有连续达到暗色像素阈值才判定二维码已加载。 |
 | `return_to_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 在截图保存后返回两次，等待目标订单出现“暂无人付款”或“已支付”；API 会在二维码响应返回后于后台执行此步骤。 |
-| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试。页面有可读文本且不包含“暂无人付款”时按已支付通过；完全无文本时再次重进。达到 `max_payment_refresh_count`（默认 5）次且明确仍为“暂无人付款”时返回 `paid=False`，进入未支付订单详情关闭并删除收款单。订单卡片优先按订单号 UIA 元素实时矩形点击；关闭、确认、删除和更多操作必须命中对应 UIA 文本元素，进入关闭流程前排除列表页、创建页和分享图页面，最终确认目标订单已从列表消失才返回成功。 |
+| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试。目标订单号与状态同卡片匹配时优先采用；列表未显示订单号时允许页面唯一明确状态兜底。达到 `max_payment_refresh_count`（默认 5）次时调用 `on_failed`；读取或刷新发生异常时调用 `on_status_error`。两种失败路径都会继续尝试通过目标订单 UIA 元素进入详情并关闭删除，不使用固定坐标误点其他页面。 |
 | `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；点击后立即丢弃旧 UIA `root`，从空对象重新获取界面信息，等待订单状态加载完成并返回新窗口对象。 |
-| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出可判定状态；明确“暂无人付款”返回未支付，页面有其他可读文本则返回已支付，完全无文本时继续轮询并在超时后输出诊断。 |
+| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出明确状态；优先匹配目标订单卡片，订单号未暴露时允许页面唯一的“暂无人付款”或“已支付”兜底，仅有其他文本或状态冲突时继续轮询并在超时后输出诊断。 |
 | `_wait_for_visible_text_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定文本出现；先检查当前有效窗口，未命中且达到间隔后才按窗口标题/PID 重新获取 UIA 对象。 |
 | `_capture_payment_detail_visual_probe()` | `.\utools\wechat\pay_order.py` | 内部辅助，安全捕获详情页切换前后的窗口视觉探针；截图不可用时返回 `None` 并继续使用 UIA 判断。 |
 | `_wait_for_payment_detail_after_order_click()` | `.\utools\wechat\pay_order.py` | 内部辅助，首次点击未进入详情时强制重新获取窗口并重新读取目标订单状态和元素矩形后重试；使用 UIA“收款记录”标题或稳定后的视觉变化确认切页，并排除列表页点击反馈。 |
@@ -89,15 +94,15 @@
 | `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，当前窗口矩形仍有效时直接复用，否则按窗口标题重新获取 UIA 顶级窗口；PID 失效时回退为按标题查找。微信重建 UIA 窗口期间会在限定时间内轮询，持续不可用时抛出 `PayOrderWindowUnavailableError` 交由等待流程重试。 |
 | `_control_has_valid_rectangle()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断旧窗口对象是否仍有可用矩形，作为重新获取失败时的兜底。 |
 | `PayOrderWindowUnavailableError` | `.\utools\wechat\pay_order.py` | 微信收款单窗口在限定时间内仍无法通过 UIA 重新获取时使用的内部异常类型，供支付等待和界面轮询流程判定为可重试状态。 |
-| `_collect_visible_uia_snapshot()` | `.\utools\wechat\pay_order.py` | 内部辅助，一次遍历收集订单状态识别所需的可见文本和矩形，供订单号、支付状态和卡片匹配复用，避免重复扫描 UIA 树。 |
-| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取目标订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形、合并卡片容器和整页文本兜底。明确包含“暂无人付款”时返回未支付；页面有其他可读文本且不含该文案时返回已支付；完全无文本时返回未知。 |
+| `_collect_visible_uia_snapshot()` | `.\utools\wechat\pay_order.py` | 内部辅助，按 `order_status_uia_max_depth`（默认 16）一次遍历收集订单状态识别所需的可见文本和矩形，供订单号、支付状态和卡片匹配复用，避免重复扫描 UIA 树。 |
+| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形和非整页的合并卡片容器。优先匹配目标订单卡片；订单号未显示时，仅有“已支付”返回已支付，仅有“暂无人付款”返回未支付；其他文本或两种状态同时命中时返回未知。 |
 | `_find_paid_order_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和“已支付”文本的可见矩形位置判断目标订单卡片，并返回点击点。 |
 | `_find_order_status_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和指定状态文本判断是否处于同一张订单卡片，并返回该状态文本中心点。 |
 | `_find_smallest_control_containing_texts()` | `.\utools\wechat\pay_order.py` | 内部辅助，查找同时包含订单号和状态文本的最小可见 UIA 容器，用于兼容刷新后被合并的订单卡片。 |
 | `_collect_visible_uia_text()` | `.\utools\wechat\pay_order.py` | 内部辅助，收集窗口中包括 `Document` 在内的可见 UIA 文本，供订单状态兜底识别和诊断。 |
 | `_rectangle_covers_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断候选文本容器是否接近整个窗口，避免把整页容器中心当成订单卡片。 |
 | `_relative_screen_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，在 UIA 只暴露整页文本时计算订单卡片的相对屏幕点击点，不直接执行点击。 |
-| `_find_visible_text_rects()` | `.\utools\wechat\pay_order.py` | 内部辅助，遍历 UIA 树并提取包含指定文本的可见控件矩形。 |
+| `_find_visible_text_rects()` | `.\utools\wechat\pay_order.py` | 内部辅助，从状态快照提取包含指定文本的可见控件矩形，并按面积从小到大排序；调用方排除覆盖整窗的聚合容器后选择卡片点击点。 |
 | `_looks_like_same_order_card()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断订单号文本和已支付文本是否像处于同一张订单卡片。 |
 | `_rect_center()` | `.\utools\wechat\pay_order.py` | 内部辅助，计算矩形中心点。 |
 | `_point_above_rect()` | `.\utools\wechat\pay_order.py` | 内部辅助，从状态文本矩形向上偏移到订单卡片主体，避免点击不响应的底部状态行。 |
@@ -120,7 +125,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态重进次数上限、订单卡片失败后的窗口重读重试与视觉判定参数；关闭删除坐标快速模式默认关闭。 |
+| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态 UIA 扫描深度、重进次数上限、订单卡片失败后的窗口重读重试与视觉判定参数；关闭删除坐标快速模式默认关闭。 |
 | `DEFAULT_PID` | `.\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `.\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `.\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |
@@ -143,13 +148,24 @@
 | `_PayOrderQueueWorker.estimate()` | `.\utools\api\pay_server.py` | 返回目标订单或新订单的状态、队列位置、预计等待时间和建议重试间隔。 |
 | `_PayOrderQueueWorker._queue_position()` | `.\utools\api\pay_server.py` | 获取指定任务在待处理队列中的位置。 |
 | `create_app()` | `.\utools\api\pay_server.py` | 创建 Flask app，并注册 `POST /create` 端点。 |
-| `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点处理函数；在短等待内生成成功则返回二维码，超时则返回 `code=2`、预计时间和建议重试间隔；相同订单号复用已有任务。 |
+| `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点处理函数；在短等待内生成成功则返回二维码和 `reused` 标记，超时则返回 `code=2`、预计时间和建议重试间隔；相同订单号复用已有任务。 |
 | `estimate_order()` | `.\utools\api\pay_server.py` | `POST /estimate` 端点处理函数，使用与 `/create` 相同的验签方式返回预计时间，不创建订单。 |
-| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用；识别支付成功后立即发送 webhook，回调完成后再关闭/删除收款单。达到重进次数上限仍未支付时不发送成功 webhook，关闭删除收款单并清理失效二维码。 |
-| `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知，并用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`。 |
+| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用；识别支付成功后发送 `TRADE_SUCCESS`，达到重进上限后发送 `TRADE_FAILED`，读取或刷新状态异常时发送 `TRADE_ERROR`；回调后继续尝试关闭删除并清理失效二维码。 |
+| `_post_payment_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 已签名的支付结果通知；使用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`，状态可为 `TRADE_SUCCESS`、`TRADE_FAILED` 或 `TRADE_ERROR`。 |
 | `_validate_create_payload()` | `.\utools\api\pay_server.py` | 校验 `/create` 请求必填参数：`pid`、`amount`、`timestamp`、`webhook`、`sign`。 |
 | `_verify_create_payload()` | `.\utools\api\pay_server.py` | 统一解析并验证 `/create`、`/estimate` 请求参数及 RSA 签名。 |
 | `_error()` | `.\utools\api\pay_server.py` | 构建统一错误 JSON。 |
+
+## Epay 插件
+
+| 函数 | 文件地址 | 作用 |
+| --- | --- | --- |
+| `check()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 支付页轮询接口；返回当前订单 `waiting`、`paid`、`failed` 或 `error` 状态。 |
+| `renderQrImagePage()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 渲染带倒计时和付款状态轮询的二维码页面；成功自动返回，失败、异常或超时后停止检测并提示关闭页面重新下单。 |
+| `paymentFailureStatePath()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 生成订单支付失败临时状态文件路径。 |
+| `markPaymentFailed()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 收到 `TRADE_FAILED` 或 `TRADE_ERROR` Webhook 后写入失败或异常状态，供当前支付页检测。 |
+| `getPaymentFailureStatus()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 查询两小时内有效的支付失败或状态异常标记。 |
+| `clearPaymentFailure()` | `.\Epay\LemonWXPhone\LemonWXPhone.php` | 真正创建新任务或支付成功时清理旧失败状态。 |
 
 ## 安全签名模块
 

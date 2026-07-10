@@ -310,7 +310,11 @@ def create_app(config: PayServerConfig) -> Flask:
 
         if job.error is not None:
             return jsonify(_error(f"创建收款单失败: {job.error}")), 500
-        return jsonify(job.response)
+        response = dict(job.response or {})
+        response_data = dict(response.get("data") or {})
+        response_data["reused"] = reused
+        response["data"] = response_data
+        return jsonify(response)
 
     @app.post("/estimate")
     def estimate_order():
@@ -354,13 +358,15 @@ def _wait_paid_webhook_and_cleanup(
         try:
             run_timed(
                 "webhook_request",
-                lambda: _post_payment_success_webhook(
+                lambda: _post_payment_webhook(
                     webhook=webhook,
                     trade_no=trade_no,
                     amount=amount,
                     webhook_public_key_path=config.webhook_public_key_path,
                     timeout_seconds=config.webhook_timeout_seconds,
                     retry_count=config.webhook_retry_count,
+                    trade_status="TRADE_SUCCESS",
+                    message="success",
                 ),
             )
         except Exception:
@@ -368,6 +374,54 @@ def _wait_paid_webhook_and_cleanup(
         else:
             webhook_sent = True
             print("Webhook 回调已完成，开始关闭并删除收款单", flush=True)
+
+    def notify_payment_failure() -> None:
+        nonlocal webhook_sent, payment_failed
+        payment_failed = True
+        print("支付失败，正在发送失败 Webhook", flush=True)
+        try:
+            run_timed(
+                "webhook_failure_request",
+                lambda: _post_payment_webhook(
+                    webhook=webhook,
+                    trade_no=trade_no,
+                    amount=amount,
+                    webhook_public_key_path=config.webhook_public_key_path,
+                    timeout_seconds=config.webhook_timeout_seconds,
+                    retry_count=config.webhook_retry_count,
+                    trade_status="TRADE_FAILED",
+                    message="payment_failed",
+                ),
+            )
+        except Exception:
+            traceback.print_exc()
+        else:
+            webhook_sent = True
+            print("支付失败 Webhook 回调已完成，开始关闭并删除收款单", flush=True)
+
+    def notify_order_status_error() -> None:
+        nonlocal webhook_sent, payment_failed
+        payment_failed = True
+        print("订单状态异常，正在发送异常 Webhook", flush=True)
+        try:
+            run_timed(
+                "webhook_status_error_request",
+                lambda: _post_payment_webhook(
+                    webhook=webhook,
+                    trade_no=trade_no,
+                    amount=amount,
+                    webhook_public_key_path=config.webhook_public_key_path,
+                    timeout_seconds=config.webhook_timeout_seconds,
+                    retry_count=config.webhook_retry_count,
+                    trade_status="TRADE_ERROR",
+                    message="order_status_error",
+                ),
+            )
+        except Exception:
+            traceback.print_exc()
+        else:
+            webhook_sent = True
+            print("订单状态异常 Webhook 回调已完成，开始关闭并删除收款单", flush=True)
 
     try:
         payment_result = wait_paid_then_close_pay_order(
@@ -377,15 +431,24 @@ def _wait_paid_webhook_and_cleanup(
             window_title=config.window_title,
             timeout_seconds=config.wait_paid_timeout_seconds,
             on_paid=notify_payment_success,
+            on_failed=notify_payment_failure,
+            on_status_error=notify_order_status_error,
             timings_seconds=timings,
         )
-        payment_failed = bool(payment_result.get("payment_failed"))
+        payment_failed = bool(payment_result.get("payment_failed")) or payment_failed
         if payment_failed:
-            print(
-                f"支付失败，已关闭并删除收款单: {trade_no}, "
-                f"{payment_result.get('failure_reason')}",
-                flush=True,
-            )
+            if payment_result.get("status_error"):
+                print(
+                    f"订单状态异常，已结束等待并完成关闭删除: {trade_no}, "
+                    f"{payment_result.get('failure_reason')}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"支付失败，已关闭并删除收款单: {trade_no}, "
+                    f"{payment_result.get('failure_reason')}",
+                    flush=True,
+                )
     except Exception as exc:
         if webhook_sent:
             print("Webhook 已回调，后续关闭或删除收款单失败。", flush=True)
@@ -416,18 +479,19 @@ def _wait_paid_webhook_and_cleanup(
     return timings
 
 
-def _post_payment_success_webhook(
+def _post_payment_webhook(
     webhook: str,
     trade_no: str,
     amount: str,
     webhook_public_key_path: str,
     timeout_seconds: float,
     retry_count: int,
+    trade_status: str,
+    message: str,
 ) -> None:
-    trade_status = "TRADE_SUCCESS"
     body = {
         "code": 1,
-        "msg": "success",
+        "msg": message,
         "data": {
             "trade_no": trade_no,
             "total_amount": amount,

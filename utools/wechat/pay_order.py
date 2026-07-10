@@ -15,6 +15,7 @@ from utools.ui.screenshot import (
     capture_control_visual_probe,
     capture_relative_crop,
     compare_control_visual_probes,
+    inspect_relative_crop_visual_metrics,
 )
 from utools.ui.inspector import _safe_get, _safe_method, _uia_control_to_info
 from utools.ui.operator import (
@@ -255,12 +256,17 @@ def generate_and_capture_qr_code(
     generate_click_point: Optional[Dict[str, int]] = None
     generate_click_method = ""
     share_root: Any = None
+    qr_readiness: Optional[Dict[str, Any]] = None
+    capture_result: Optional[Dict[str, Any]] = None
+    output_path = _make_qr_output_path(order_no, output_dir)
+    attempt_count = 0
 
     for attempt in range(1, retry_count + 1):
+        attempt_count = attempt
         try:
             root = _reacquire_pay_order_root(root, pid, window_title)
             if uia_tree_has_visible_text(root, components.generated_share_title, max_depth=8):
-                share_root = root
+                current_share_root = root
             else:
                 click_result = _click_generate_qr_button(root)
                 generate_button_info = click_result["button"]
@@ -271,7 +277,7 @@ def generate_and_capture_qr_code(
                     f"方式={generate_click_method}, 坐标={generate_click_point}",
                     flush=True,
                 )
-                share_root = _wait_for_visible_text_reacquiring(
+                current_share_root = _wait_for_visible_text_reacquiring(
                     root=root,
                     text=components.generated_share_title,
                     timeout_seconds=share_page_timeout,
@@ -279,16 +285,49 @@ def generate_and_capture_qr_code(
                     window_title=window_title,
                 )
 
-            if share_root is not None:
-                break
+            if current_share_root is None:
+                raise TimeoutError(
+                    f"第{attempt}次点击后未在{share_page_timeout}秒内进入"
+                    f"“{components.generated_share_title}”，"
+                    f"点击方式={generate_click_method}，坐标={generate_click_point}"
+                )
 
-            retry_errors.append(
-                f"第{attempt}次点击后未在{share_page_timeout}秒内进入"
-                f"“{components.generated_share_title}”，"
-                f"点击方式={generate_click_method}，坐标={generate_click_point}"
+            share_root, qr_readiness = _wait_for_qr_card_ready(
+                root=current_share_root,
+                pid=pid,
+                window_title=window_title,
             )
+            capture_result = capture_relative_crop(
+                control=share_root,
+                output_path=output_path,
+                left_ratio=components.qr_card_left_ratio,
+                top_ratio=components.qr_card_top_ratio,
+                right_ratio=components.qr_card_right_ratio,
+                bottom_ratio=components.qr_card_bottom_ratio,
+                dark_pixel_threshold=components.generate_qr_ready_dark_pixel_threshold,
+            )
+            captured_dark_ratio = float(
+                (capture_result.get("visual_metrics") or {}).get("dark_pixel_ratio") or 0.0
+            )
+            if captured_dark_ratio < components.generate_qr_ready_min_dark_pixel_ratio:
+                raise RuntimeError(
+                    f"最终截图暗色像素占比{captured_dark_ratio:.4f}低于"
+                    f"阈值{components.generate_qr_ready_min_dark_pixel_ratio:.4f}"
+                )
+            print(
+                f"收款码已加载，开始返回二维码: 暗色像素占比={captured_dark_ratio:.4f}",
+                flush=True,
+            )
+            break
         except Exception as exc:
-            retry_errors.append(f"第{attempt}次生成收款码失败: {exc}")
+            capture_result = None
+            share_root = None
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+            retry_errors.append(f"第{attempt}次等待收款码加载失败: {exc}")
 
         if attempt < retry_count:
             print(
@@ -297,32 +336,80 @@ def generate_and_capture_qr_code(
             )
             time.sleep(components.generate_qr_retry_wait_seconds)
 
-    if share_root is None:
+    if share_root is None or capture_result is None:
         last_error = retry_errors[-1] if retry_errors else "未知原因"
         raise TimeoutError(
-            f"点击“{components.generate_qr_button_text}”后未进入"
-            f"“{components.generated_share_title}”，已重试{retry_count}次。"
+            f"“{components.generated_share_title}”中的收款码未加载完成，"
+            f"已重试{retry_count}次。"
             f"最后错误: {last_error}"
         )
 
-    output_path = _make_qr_output_path(order_no, output_dir)
-    capture_result = capture_relative_crop(
-        control=share_root,
-        output_path=output_path,
-        left_ratio=components.qr_card_left_ratio,
-        top_ratio=components.qr_card_top_ratio,
-        right_ratio=components.qr_card_right_ratio,
-        bottom_ratio=components.qr_card_bottom_ratio,
-    )
     return {
         "generated": True,
         "retry_count": retry_count,
+        "attempt_count": attempt_count,
         "retry_errors": retry_errors,
+        "qr_readiness": qr_readiness,
         "button": generate_button_info,
         "generate_click_point": generate_click_point,
         "generate_click_method": generate_click_method,
         **capture_result,
     }
+
+
+def _wait_for_qr_card_ready(
+    root: Any,
+    pid: Optional[int] = DEFAULT_PID,
+    window_title: str = DEFAULT_WINDOW_TITLE,
+) -> tuple[Any, Dict[str, Any]]:
+    """等待二维码裁剪区连续出现足够暗色纹理，排除“加载中”占位图."""
+
+    components = WECHAT_PAY_ORDER
+    deadline = time.time() + max(0.1, components.generate_qr_render_timeout_seconds)
+    required_samples = max(1, int(components.generate_qr_ready_consecutive_samples))
+    consecutive_ready = 0
+    observations: list[Dict[str, Any]] = []
+    current_root = root
+
+    while True:
+        current_root = _reacquire_pay_order_root(current_root, pid, window_title)
+        metrics = inspect_relative_crop_visual_metrics(
+            control=current_root,
+            left_ratio=components.qr_card_left_ratio,
+            top_ratio=components.qr_card_top_ratio,
+            right_ratio=components.qr_card_right_ratio,
+            bottom_ratio=components.qr_card_bottom_ratio,
+            dark_pixel_threshold=components.generate_qr_ready_dark_pixel_threshold,
+        )
+        dark_ratio = float(metrics.get("dark_pixel_ratio") or 0.0)
+        observations.append(
+            {
+                "dark_pixel_ratio": round(dark_ratio, 6),
+                "mean_grayscale": metrics.get("mean_grayscale"),
+            }
+        )
+        if len(observations) > 20:
+            observations.pop(0)
+
+        if dark_ratio >= components.generate_qr_ready_min_dark_pixel_ratio:
+            consecutive_ready += 1
+        else:
+            consecutive_ready = 0
+
+        if consecutive_ready >= required_samples:
+            return current_root, {
+                "ready": True,
+                "consecutive_ready_samples": consecutive_ready,
+                "observations": observations,
+                "final_metrics": metrics,
+            }
+        if time.time() >= deadline:
+            raise TimeoutError(
+                f"{components.generate_qr_render_timeout_seconds}秒内二维码区域未加载完成；"
+                f"最近暗色像素占比={dark_ratio:.4f}，"
+                f"要求>={components.generate_qr_ready_min_dark_pixel_ratio:.4f}"
+            )
+        time.sleep(components.generate_qr_render_poll_interval_seconds)
 
 
 def return_to_wait_payment_page(
@@ -371,9 +458,11 @@ def wait_paid_then_close_pay_order(
     window_title: str = DEFAULT_WINDOW_TITLE,
     timeout_seconds: Optional[float] = None,
     on_paid: Optional[Callable[[], None]] = None,
+    on_failed: Optional[Callable[[], None]] = None,
+    on_status_error: Optional[Callable[[], None]] = None,
     timings_seconds: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
-    """刷新订单状态；支付成功或达到重进上限后关闭并删除收款单."""
+    """刷新订单状态；支付成功、失败或状态异常后关闭并删除收款单."""
 
     components = WECHAT_PAY_ORDER
     workflow_started_at = time.perf_counter()
@@ -526,6 +615,7 @@ def wait_paid_then_close_pay_order(
     status_load_retry_count = 0
     payment_failed = False
     failure_reason: Optional[str] = None
+    status_error: Optional[Exception] = None
 
     def refresh_limit_reached() -> bool:
         refresh_limit = max(0, int(components.max_payment_refresh_count))
@@ -534,9 +624,14 @@ def wait_paid_then_close_pay_order(
     def mark_payment_failed(status: Optional[Dict[str, Any]]) -> None:
         nonlocal payment_failed, failure_reason, order_card_point
         payment_failed = True
+        status_name = "未读取到订单状态"
+        if status is not None:
+            status_name = str(status.get("status_text") or "")
+            if not status_name:
+                status_name = "状态未知"
         failure_reason = (
             f"等待付款失败，已重新进入小程序{refresh_count}次，"
-            f"订单状态仍为“{components.wait_payment_status_text}”。"
+            f"订单状态为“{status_name}”。"
         )
         if status is not None:
             order_card_point = status.get("click_point")
@@ -544,93 +639,105 @@ def wait_paid_then_close_pay_order(
     try:
         wait_payment_started_at = time.perf_counter()
         try:
-            while True:
-                try:
-                    root = _reacquire_pay_order_root(root, pid, window_title)
-                except PayOrderWindowUnavailableError as exc:
-                    if deadline is not None and time.time() >= deadline:
-                        raise TimeoutError(
-                            f"等待付款超时，{timeout}秒内未看到“{components.paid_status_text}”；"
-                            f"最近窗口状态: {exc}"
-                        ) from exc
-                    status_load_retry_count += 1
-                    last_refresh_result = {
-                        "loaded": False,
-                        "retry_count": status_load_retry_count,
-                        "error": str(exc),
-                    }
-                    print(
-                        f"第{status_load_retry_count}次获取微信收款单窗口失败，"
-                        f"将继续等待并重试: {exc}",
-                        flush=True,
-                    )
-                    time.sleep(components.status_refresh_retry_wait_seconds)
-                    continue
-                last_status = _read_order_payment_status(root, str(order_no))
-                if last_status["status"] == "paid":
-                    order_card_point = last_status.get("click_point")
-                    break
-                if last_status["status"] not in {"unpaid", "unknown"}:
-                    raise RuntimeError(f"无法识别订单状态: {last_status}")
-                if deadline is not None and time.time() >= deadline:
-                    raise TimeoutError(
-                        f"等待付款超时，{timeout}秒内未看到“{components.paid_status_text}”."
-                    )
-                if (
-                    last_status["status"] == "unpaid"
-                    and refresh_limit_reached()
-                ):
-                    mark_payment_failed(last_status)
-                    break
-                refresh_started_at = time.time()
-                try:
-                    root, last_refresh_result = refresh_wait_payment_page(
-                        root=root,
-                        order_no=order_no,
-                        pid=pid,
-                        window_title=window_title,
-                    )
-                    refresh_count += 1
-                except (TimeoutError, PayOrderWindowUnavailableError) as exc:
-                    refresh_count += 1
-                    status_load_retry_count += 1
-                    last_refresh_result = {
-                        "loaded": False,
-                        "retry_count": status_load_retry_count,
-                        "error": str(exc),
-                    }
-                    print(
-                        f"第{status_load_retry_count}次重新进入小程序后未读取到订单状态，"
-                        f"将再次重新进入: {exc}",
-                        flush=True,
-                    )
-                    if refresh_limit_reached():
+            try:
+                while True:
+                    try:
+                        root = _reacquire_pay_order_root(root, pid, window_title)
+                    except PayOrderWindowUnavailableError as exc:
+                        if deadline is not None and time.time() >= deadline:
+                            raise TimeoutError(
+                                f"等待付款超时，{timeout}秒内未看到“{components.paid_status_text}”；"
+                                f"最近窗口状态: {exc}"
+                            ) from exc
+                        status_load_retry_count += 1
+                        last_refresh_result = {
+                            "loaded": False,
+                            "retry_count": status_load_retry_count,
+                            "error": str(exc),
+                        }
                         print(
-                            f"已重新进入小程序{refresh_count}次，但当前订单状态仍未知；"
-                            f"为避免误删已支付订单，将继续刷新直到读取到明确状态。",
+                            f"第{status_load_retry_count}次获取微信收款单窗口失败，"
+                            f"将继续等待并重试: {exc}",
                             flush=True,
                         )
-                    time.sleep(components.status_refresh_retry_wait_seconds)
-                    continue
-                loaded_status = last_refresh_result.get("loaded_status") or {}
-                last_status = loaded_status
-                if loaded_status.get("status") == "paid":
-                    order_card_point = loaded_status.get("click_point")
-                    break
-                if (
-                    loaded_status.get("status") == "unpaid"
-                    and refresh_limit_reached()
-                ):
-                    mark_payment_failed(loaded_status)
-                    break
-                refresh_elapsed = time.time() - refresh_started_at
-                time.sleep(
-                    max(0.0, components.payment_refresh_interval_seconds - refresh_elapsed)
-                )
-        finally:
-            _record_timing(workflow_timings, "wait_payment", wait_payment_started_at)
+                        time.sleep(components.status_refresh_retry_wait_seconds)
+                        continue
+                    last_status = _read_order_payment_status(root, str(order_no))
+                    if last_status["status"] == "paid":
+                        order_card_point = last_status.get("click_point")
+                        break
+                    if last_status["status"] not in {"unpaid", "unknown"}:
+                        raise RuntimeError(f"无法识别订单状态: {last_status}")
+                    if deadline is not None and time.time() >= deadline:
+                        raise TimeoutError(
+                            f"等待付款超时，{timeout}秒内未看到“{components.paid_status_text}”."
+                        )
+                    if refresh_limit_reached():
+                        mark_payment_failed(last_status)
+                        break
+                    refresh_started_at = time.time()
+                    try:
+                        root, last_refresh_result = refresh_wait_payment_page(
+                            root=root,
+                            order_no=order_no,
+                            pid=pid,
+                            window_title=window_title,
+                        )
+                        refresh_count += 1
+                    except (TimeoutError, PayOrderWindowUnavailableError) as exc:
+                        refresh_count += 1
+                        status_load_retry_count += 1
+                        last_refresh_result = {
+                            "loaded": False,
+                            "retry_count": status_load_retry_count,
+                            "error": str(exc),
+                        }
+                        if refresh_limit_reached():
+                            print(
+                                f"第{refresh_count}次重新进入小程序后仍未读取到订单状态；"
+                                f"已达到刷新上限，按支付失败处理: {exc}",
+                                flush=True,
+                            )
+                            mark_payment_failed(last_status)
+                            break
+                        print(
+                            f"第{status_load_retry_count}次重新进入小程序后未读取到订单状态，"
+                            f"将再次重新进入: {exc}",
+                            flush=True,
+                        )
+                        time.sleep(components.status_refresh_retry_wait_seconds)
+                        continue
+                    loaded_status = last_refresh_result.get("loaded_status") or {}
+                    last_status = loaded_status
+                    if loaded_status.get("status") == "paid":
+                        order_card_point = loaded_status.get("click_point")
+                        break
+                    if refresh_limit_reached():
+                        mark_payment_failed(loaded_status)
+                        break
+                    refresh_elapsed = time.time() - refresh_started_at
+                    time.sleep(
+                        max(0.0, components.payment_refresh_interval_seconds - refresh_elapsed)
+                    )
+            finally:
+                _record_timing(workflow_timings, "wait_payment", wait_payment_started_at)
+        except Exception as exc:
+            status_error = exc
+            payment_failed = True
+            failure_reason = f"订单状态异常: {exc}"
+            order_card_point = None
+            last_refresh_result = {
+                "loaded": False,
+                "status_error": True,
+                "error": str(exc),
+            }
+            print(f"订单状态异常，终止支付等待并准备关闭删除: {exc}", flush=True)
 
-        if not payment_failed and on_paid is not None:
+        if status_error is not None and on_status_error is not None:
+            run_timed("notify_status_error", on_status_error)
+        elif payment_failed and on_failed is not None:
+            run_timed("notify_failed", on_failed)
+        elif not payment_failed and on_paid is not None:
             run_timed("notify_paid", on_paid)
 
         order_status_text = (
@@ -658,15 +765,23 @@ def wait_paid_then_close_pay_order(
                 ),
             )
         else:
-            order_card_point = run_timed(
-                click_order_timing_name,
-                lambda: _click_text_or_relative(
-                    root,
-                    text=order_status_text,
-                    x_ratio=components.paid_card_x_ratio,
-                    y_ratio=components.paid_card_y_ratio,
-                ),
-            )
+            if payment_failed:
+                if not str(order_no).strip():
+                    raise RuntimeError("支付失败后未提供订单号，无法安全定位待关闭收款单.")
+                order_card_point = run_timed(
+                    click_order_timing_name,
+                    lambda: _click_required_uia_text_element(root, str(order_no)),
+                )
+            else:
+                order_card_point = run_timed(
+                    click_order_timing_name,
+                    lambda: _click_text_or_relative(
+                        root,
+                        text=order_status_text,
+                        x_ratio=components.paid_card_x_ratio,
+                        y_ratio=components.paid_card_y_ratio,
+                    ),
+                )
 
         detail_result = run_timed(
             "wait_payment_detail",
@@ -869,6 +984,7 @@ def wait_paid_then_close_pay_order(
             "paid": not payment_failed,
             "payment_failed": payment_failed,
             "failure_reason": failure_reason,
+            "status_error": str(status_error) if status_error is not None else None,
             "closed": True,
             "deleted": True,
             "refresh_count": refresh_count,
@@ -1353,7 +1469,10 @@ def _collect_visible_uia_snapshot(root: Any) -> list[Dict[str, Any]]:
     """一次遍历收集状态识别所需的可见文本和矩形，供多个匹配步骤复用."""
 
     snapshot: list[Dict[str, Any]] = []
-    for item, depth in iter_uia_tree(root, max_depth=10):
+    for item, depth in iter_uia_tree(
+        root,
+        max_depth=WECHAT_PAY_ORDER.order_status_uia_max_depth,
+    ):
         info = uia_control_search_info(item)
         rectangle = info.get("rectangle") or {}
         width = int(rectangle.get("width") or 0)
@@ -1387,6 +1506,30 @@ def _read_order_payment_status(root: Any, order_no: str) -> Dict[str, Any]:
         components.paid_status_text,
         snapshot=snapshot,
     )
+    unpaid_point = _find_order_status_card_click_point(
+        root,
+        order_no,
+        components.wait_payment_status_text,
+        snapshot=snapshot,
+    )
+    if paid_point is not None and unpaid_point is not None:
+        return {
+            "status": "unknown",
+            "status_text": "",
+            "click_point": None,
+            "source": "ambiguous_target_status",
+            "debug": {
+                "order_text_found": True,
+                "paid_text_found": True,
+                "unpaid_text_found": True,
+            },
+        }
+    if unpaid_point is not None:
+        return {
+            "status": "unpaid",
+            "status_text": components.wait_payment_status_text,
+            "click_point": unpaid_point,
+        }
     if paid_point is not None:
         return {
             "status": "paid",
@@ -1394,20 +1537,8 @@ def _read_order_payment_status(root: Any, order_no: str) -> Dict[str, Any]:
             "click_point": paid_point,
         }
 
-    unpaid_point = _find_order_status_card_click_point(
-        root,
-        order_no,
-        components.wait_payment_status_text,
-        snapshot=snapshot,
-    )
-    if unpaid_point is not None:
-        return {
-            "status": "unpaid",
-            "status_text": components.wait_payment_status_text,
-            "click_point": unpaid_point,
-        }
-
     page_text = _collect_visible_uia_text(root, snapshot=snapshot)
+    order_text_found = bool(order_no and order_no in page_text)
     paid_text_found = components.paid_status_text in page_text
     unpaid_text_found = components.wait_payment_status_text in page_text
     if paid_text_found and not unpaid_text_found:
@@ -1416,40 +1547,54 @@ def _read_order_payment_status(root: Any, order_no: str) -> Dict[str, Any]:
             components.paid_status_text,
             snapshot=snapshot,
         )
+        paid_status_rect = next(
+            (
+                rectangle
+                for rectangle in paid_status_rects
+                if not _rectangle_covers_root(root, rectangle)
+            ),
+            None,
+        )
         return {
             "status": "paid",
             "status_text": components.paid_status_text,
             "click_point": (
-                _point_above_rect(paid_status_rects[0], 45)
-                if paid_status_rects
+                _point_above_rect(paid_status_rect, 45)
+                if paid_status_rect is not None
                 else None
             ),
-            "source": "page_single_status",
+            "source": "page_single_explicit_status",
         }
     if unpaid_text_found and not paid_text_found:
+        unpaid_status_rects = _find_visible_text_rects(
+            root,
+            components.wait_payment_status_text,
+            snapshot=snapshot,
+        )
+        unpaid_status_rect = next(
+            (
+                rectangle
+                for rectangle in unpaid_status_rects
+                if not _rectangle_covers_root(root, rectangle)
+            ),
+            None,
+        )
         return {
             "status": "unpaid",
             "status_text": components.wait_payment_status_text,
-            "click_point": None,
-            "source": "page_single_status",
-        }
-    if page_text.strip() and not unpaid_text_found:
-        return {
-            "status": "paid",
-            "status_text": components.paid_status_text,
-            "click_point": _relative_screen_point(
-                root,
-                components.paid_card_x_ratio,
-                components.paid_card_y_ratio,
+            "click_point": (
+                _point_above_rect(unpaid_status_rect, 45)
+                if unpaid_status_rect is not None
+                else None
             ),
-            "source": "page_text_without_unpaid",
+            "source": "page_single_explicit_status",
         }
     return {
         "status": "unknown",
         "status_text": "",
         "click_point": None,
         "debug": {
-            "order_text_found": bool(order_no and order_no in page_text),
+            "order_text_found": order_text_found,
             "paid_text_found": paid_text_found,
             "unpaid_text_found": unpaid_text_found,
         },
@@ -1487,8 +1632,10 @@ def _find_order_status_card_click_point(
     matched_order_rects = [
         order_rect
         for order_rect in order_rects
+        if not _rectangle_covers_root(root, order_rect)
         if any(
-            _looks_like_same_order_card(order_rect, status_rect)
+            not _rectangle_covers_root(root, status_rect)
+            and _looks_like_same_order_card(order_rect, status_rect)
             for status_rect in status_rects
         )
     ]
@@ -1505,27 +1652,7 @@ def _find_order_status_card_click_point(
     )
     if container_rect is not None and not _rectangle_covers_root(root, container_rect):
         return _rect_center(container_rect)
-
-    page_text = _collect_visible_uia_text(root, snapshot=current_snapshot)
-    if order_no not in page_text or status_text not in page_text:
-        return None
-
-    opposite_status = (
-        WECHAT_PAY_ORDER.wait_payment_status_text
-        if status_text == WECHAT_PAY_ORDER.paid_status_text
-        else WECHAT_PAY_ORDER.paid_status_text
-    )
-    if opposite_status in page_text:
-        return None
-    if order_rects:
-        return _rect_center(order_rects[0])
-    if status_rects:
-        return _point_above_rect(status_rects[0], 45)
-    return _relative_screen_point(
-        root,
-        WECHAT_PAY_ORDER.paid_card_x_ratio,
-        WECHAT_PAY_ORDER.paid_card_y_ratio,
-    )
+    return None
 
 
 def _find_smallest_control_containing_texts(
@@ -1577,7 +1704,7 @@ def _rectangle_covers_root(root: Any, rectangle: Dict[str, int]) -> bool:
     root_rectangle = root_info.get("rectangle") or {}
     root_area = int(root_rectangle.get("width") or 0) * int(root_rectangle.get("height") or 0)
     rectangle_area = rectangle["width"] * rectangle["height"]
-    return root_area > 0 and rectangle_area >= root_area * 0.80
+    return root_area > 0 and rectangle_area >= root_area * 0.50
 
 
 def _relative_screen_point(root: Any, x_ratio: float, y_ratio: float) -> tuple[int, int]:
@@ -1600,7 +1727,7 @@ def _find_visible_text_rects(
     rects: list[Dict[str, int]] = []
     current_snapshot = snapshot if snapshot is not None else _collect_visible_uia_snapshot(root)
     for item in current_snapshot:
-        if int(item.get("depth") or 0) > 8:
+        if int(item.get("depth") or 0) > WECHAT_PAY_ORDER.order_status_uia_max_depth:
             continue
         if item.get("control_type") == "Document":
             continue
@@ -1613,6 +1740,7 @@ def _find_visible_text_rects(
                 for key in ("left", "top", "right", "bottom", "width", "height")
             }
         )
+    rects.sort(key=lambda rectangle: rectangle["width"] * rectangle["height"])
     return rects
 
 
