@@ -10,7 +10,6 @@ from utools.ui.inspector import (
     _find_uia_top_windows,
     _safe_get,
     _safe_method,
-    _uia_control_to_info,
 )
 
 
@@ -42,8 +41,8 @@ def find_first_uia_top_window(
     if is_usable_top_window(candidate):
         return candidate
 
-    candidate_info = _uia_control_to_info(candidate, 0, 0, "0")
-    process_id = candidate_info.get("process_id")
+    element = getattr(candidate, "element_info", candidate)
+    process_id = _safe_get(lambda: element.process_id)
     if isinstance(process_id, int):
         for window in _find_uia_top_windows(desktop.windows(), process_id, ""):
             if is_usable_top_window(window):
@@ -53,7 +52,7 @@ def find_first_uia_top_window(
 
 
 def is_usable_top_window(window: Any) -> bool:
-    info = _uia_control_to_info(window, 0, 0, "0")
+    info = uia_control_search_info(window)
     rectangle = info.get("rectangle") or {}
     if info.get("visible") is False:
         return False
@@ -126,6 +125,32 @@ def uia_control_search_info(control: Any) -> dict[str, Any]:
     }
 
 
+def _find_exact_title_controls(root: Any, text: str) -> List[Any]:
+    """优先使用 UIA 原生条件查询精确标题，避免 Python 逐层遍历整棵树."""
+
+    descendants = getattr(root, "descendants", None)
+    if not callable(descendants):
+        return []
+    try:
+        return list(descendants(title=text))
+    except Exception:
+        return []
+
+
+def _control_text_contains(control: Any, text: str) -> bool:
+    """按需读取控件文本，未命中时不读取矩形等昂贵 UIA 属性."""
+
+    element = getattr(control, "element_info", control)
+    name = str(_safe_get(lambda: element.name, "") or "")
+    if text in name:
+        return True
+    window_text = str(_safe_method(control, "window_text", "") or "")
+    if text in window_text:
+        return True
+    value = str(_safe_method(control, "get_value", "") or "")
+    return text in value
+
+
 def find_uia_click_target(
     root: Any,
     text: str,
@@ -133,31 +158,39 @@ def find_uia_click_target(
 ) -> Optional[Any]:
     candidates: List[tuple[tuple[int, int, int], Any]] = []
 
-    for control, depth in iter_uia_tree(root, max_depth):
-        info = uia_control_search_info(control)
-        blob = info["text_blob"]
-        rectangle = info.get("rectangle") or {}
-        width = int(rectangle.get("width") or 0)
-        height = int(rectangle.get("height") or 0)
-        area = width * height
-        control_type = info.get("control_type") or ""
+    def collect_candidates(controls: Iterable[tuple[Any, int]]) -> None:
+        for control, depth in controls:
+            if not _control_text_contains(control, text):
+                continue
+            info = uia_control_search_info(control)
+            blob = info["text_blob"]
+            rectangle = info.get("rectangle") or {}
+            width = int(rectangle.get("width") or 0)
+            height = int(rectangle.get("height") or 0)
+            area = width * height
+            control_type = info.get("control_type") or ""
 
-        if text not in blob or width <= 0 or height <= 0:
-            continue
-        if info.get("visible") is False or info.get("enabled") is False:
-            continue
-        if control_type == "Document":
-            continue
+            if text not in blob or width <= 0 or height <= 0:
+                continue
+            if info.get("visible") is False or info.get("enabled") is False:
+                continue
+            if control_type == "Document":
+                continue
 
-        priority = 0
-        if control_type == "Button":
-            priority -= 1000
-        if info.get("name") == text or info.get("text") == text:
-            priority -= 100
-        if control_type in {"Text", "Hyperlink"}:
-            priority -= 30
+            priority = 0
+            if control_type == "Button":
+                priority -= 1000
+            if info.get("name") == text or info.get("text") == text:
+                priority -= 100
+            if control_type in {"Text", "Hyperlink"}:
+                priority -= 30
 
-        candidates.append(((priority, area, -depth), control))
+            candidates.append(((priority, area, -depth), control))
+
+    exact_controls = _find_exact_title_controls(root, text)
+    collect_candidates((control, 0) for control in exact_controls)
+    if not candidates:
+        collect_candidates(iter_uia_tree(root, max_depth))
 
     if not candidates:
         return None
@@ -171,12 +204,14 @@ def click_relative(control: Any, x_ratio: float, y_ratio: float) -> tuple[int, i
 
     from pywinauto import mouse  # type: ignore
 
-    info = _uia_control_to_info(control, 0, 0, "click-root")
-    rectangle = info.get("rectangle") or {}
-    left = int(rectangle.get("left") or 0)
-    top = int(rectangle.get("top") or 0)
-    width = int(rectangle.get("width") or 0)
-    height = int(rectangle.get("height") or 0)
+    element = getattr(control, "element_info", control)
+    rectangle = _safe_get(lambda: element.rectangle)
+    left = int(_safe_get(lambda: rectangle.left, 0) or 0)
+    top = int(_safe_get(lambda: rectangle.top, 0) or 0)
+    right = int(_safe_get(lambda: rectangle.right, 0) or 0)
+    bottom = int(_safe_get(lambda: rectangle.bottom, 0) or 0)
+    width = max(0, right - left)
+    height = max(0, bottom - top)
     if width <= 0 or height <= 0:
         raise RuntimeError("目标控件矩形无效，无法点击.")
 
@@ -339,16 +374,35 @@ def wait_for_visible_uia_text(
     return None
 
 
-def uia_tree_has_visible_text(control: Any, text: str, max_depth: Optional[int] = None) -> bool:
-    for item, depth in iter_uia_tree(control, max_depth):
-        info = uia_control_search_info(item)
-        rectangle = info.get("rectangle") or {}
-        if info.get("control_type") == "Document":
-            continue
-        if info.get("visible") is False:
-            continue
-        if int(rectangle.get("width") or 0) <= 0 or int(rectangle.get("height") or 0) <= 0:
-            continue
-        if text in info["text_blob"]:
-            return True
+def uia_tree_has_visible_text(
+    control: Any,
+    text: str,
+    max_depth: Optional[int] = None,
+    exact_title_only: bool = False,
+) -> bool:
+    def controls_have_text(controls: Iterable[tuple[Any, int]]) -> bool:
+        for item, _depth in controls:
+            if not _control_text_contains(item, text):
+                continue
+            info = uia_control_search_info(item)
+            rectangle = info.get("rectangle") or {}
+            if info.get("control_type") == "Document":
+                continue
+            if info.get("visible") is False:
+                continue
+            if int(rectangle.get("width") or 0) <= 0:
+                continue
+            if int(rectangle.get("height") or 0) <= 0:
+                continue
+            if text in info["text_blob"]:
+                return True
+        return False
+
+    exact_controls = _find_exact_title_controls(control, text)
+    if controls_have_text((item, 0) for item in exact_controls):
+        return True
+    if exact_title_only:
+        return False
+    if controls_have_text(iter_uia_tree(control, max_depth)):
+        return True
     return False

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from utools.api.pay_server import PayServerConfig, create_app
@@ -8,8 +9,8 @@ from utools.components.wechat_pay_order import DEFAULT_WINDOW_TITLE
 
 
 # ===== Flask 服务配置 =====
-HOST = "0.0.0.0"
-PORT = 5000
+HOST = os.environ.get("WECHAT_PAY_SERVER_HOST", "0.0.0.0")
+PORT = int(os.environ.get("WECHAT_PAY_SERVER_PORT", "5000"))
 DEBUG = False
 
 # 第一次启动会自动生成 keys/private_key.pem 和 keys/public_key.pem。

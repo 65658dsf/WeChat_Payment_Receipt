@@ -337,6 +337,7 @@ def _wait_paid_webhook_and_cleanup(
     qr_path: str,
 ) -> Dict[str, float]:
     webhook_sent = False
+    payment_failed = False
     workflow_started_at = time.perf_counter()
     timings: Dict[str, float] = {}
 
@@ -369,7 +370,7 @@ def _wait_paid_webhook_and_cleanup(
             print("Webhook 回调已完成，开始关闭并删除收款单", flush=True)
 
     try:
-        wait_paid_then_close_pay_order(
+        payment_result = wait_paid_then_close_pay_order(
             root=None,
             order_no=trade_no,
             pid=config.window_pid,
@@ -378,12 +379,24 @@ def _wait_paid_webhook_and_cleanup(
             on_paid=notify_payment_success,
             timings_seconds=timings,
         )
-    except Exception:
+        payment_failed = bool(payment_result.get("payment_failed"))
+        if payment_failed:
+            print(
+                f"支付失败，已关闭并删除收款单: {trade_no}, "
+                f"{payment_result.get('failure_reason')}",
+                flush=True,
+            )
+    except Exception as exc:
         if webhook_sent:
             print("Webhook 已回调，后续关闭或删除收款单失败。", flush=True)
+        else:
+            print(
+                f"支付等待失败: {trade_no}, {exc} 当前任务将释放，可重新发起订单。",
+                flush=True,
+            )
         traceback.print_exc()
     finally:
-        if webhook_sent:
+        if webhook_sent or payment_failed:
             try:
                 run_timed(
                     "cleanup_qr_file",

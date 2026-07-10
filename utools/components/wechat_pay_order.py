@@ -39,7 +39,12 @@ class WechatPayOrderComponents:
     return_back_button_y_ratio: float = 0.05
     return_back_click_count: int = 2
     paid_card_x_ratio: float = 0.28
-    paid_card_y_ratio: float = 0.45
+    paid_card_y_ratio: float = 0.37
+    order_card_click_retry_offsets: tuple[tuple[float, float], ...] = (
+        (0.0, 0.0),
+        (0.16, 0.0),
+        (0.0, -0.05),
+    )
     more_action_x_ratio: float = 0.87
     more_action_y_ratio: float = 0.13
     close_pay_order_x_ratio: float = 0.50
@@ -60,6 +65,9 @@ class WechatPayOrderComponents:
     qr_card_bottom_ratio: float = 0.663
     amount_clear_backspace_count: int = 0
     fast_input_coordinate_mode: bool = True
+    fast_close_delete_coordinate_mode: bool = True
+    fast_close_delete_step_wait_seconds: float = 0.20
+    fast_delete_complete_wait_seconds: float = 0.40
     wait_poll_interval_seconds: float = 0.05
     window_reacquire_interval_seconds: float = 0.25
     window_reacquire_timeout_seconds: float = 3.0
@@ -71,6 +79,13 @@ class WechatPayOrderComponents:
     refresh_reenter_after_click_wait_seconds: float = 0.70
     order_status_load_timeout_seconds: float = 8.0
     status_refresh_retry_wait_seconds: float = 0.30
+    max_payment_refresh_count: int = 5
+    payment_detail_click_wait_seconds: float = 0.35
+    payment_detail_final_wait_seconds: float = 3.0
+    payment_detail_visual_sample_width: int = 72
+    payment_detail_visual_sample_height: int = 112
+    payment_detail_visual_pixel_threshold: int = 18
+    payment_detail_visual_change_ratio: float = 0.06
     generate_qr_retry_count: int = 3
     generate_qr_page_timeout_seconds: float = 4.0
     generate_qr_retry_wait_seconds: float = 0.10

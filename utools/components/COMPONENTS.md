@@ -44,22 +44,26 @@
 | `iter_uia_tree()` | `.\utools\ui\operator.py` | 以栈方式遍历 UIA 控件树。 |
 | `uia_text_blob()` | `.\utools\ui\operator.py` | 汇总控件的 name、window_text、value，作为查找文本。 |
 | `uia_control_search_info()` | `.\utools\ui\operator.py` | 获取用于遍历搜索的轻量 UIA 信息，不读取子节点计数并避免重复读取文本和值，用于降低创建流程扫描耗时。 |
-| `find_uia_click_target()` | `.\utools\ui\operator.py` | 按文本查找最合适的可点击控件，优先 Button、精确文本、小面积控件。 |
+| `find_uia_click_target()` | `.\utools\ui\operator.py` | 按文本查找最合适的可点击控件；先用 UIA 原生精确标题查询，再回退递归文本扫描，并优先 Button、精确文本、小面积控件。 |
+| `_find_exact_title_controls()` | `.\utools\ui\operator.py` | 内部辅助，优先使用 UIA 原生精确标题查询控件，减少 Python 递归遍历。 |
+| `_control_text_contains()` | `.\utools\ui\operator.py` | 内部辅助，按需读取控件名称、文本和值；文本未命中时不读取矩形和可见性等昂贵属性。 |
 | `enable_fast_timings()` | `.\utools\ui\operator.py` | 降低 pywinauto 默认动作等待时间，用于加快点击、聚焦、键盘输入。 |
-| `click_relative()` | `.\utools\ui\operator.py` | 按控件矩形相对坐标点击，适合小程序内部不暴露标准控件的区域；金额数字键盘依赖它。 |
+| `click_relative()` | `.\utools\ui\operator.py` | 只读取控件矩形并按相对坐标点击，不采集完整子树；适合小程序内部不暴露标准控件的区域，金额数字键盘依赖它。 |
 | `click_screen_point()` | `.\utools\ui\operator.py` | 点击指定屏幕坐标；等待支付时用于点击匹配到的订单卡片文本位置。 |
 | `invoke_or_click()` | `.\utools\ui\operator.py` | 优先使用 UIA InvokePattern 操作标准控件，失败时回退到鼠标点击；用于减少对活动桌面的依赖。 |
 | `paste_text()` | `.\utools\ui\operator.py` | 用剪贴板向当前焦点控件粘贴文本，可选择先全选清空；订单号填写依赖它。 |
 | `send_keys_to_control()` | `.\utools\ui\operator.py` | 聚焦目标窗口后发送键盘按键；保留为通用键盘操作能力。 |
 | `set_clipboard_text()` | `.\utools\ui\operator.py` | 使用 Windows Unicode 剪贴板 API 写入文本。 |
 | `wait_for_visible_uia_text()` | `.\utools\ui\operator.py` | 在指定窗口内等待可见文本出现。 |
-| `uia_tree_has_visible_text()` | `.\utools\ui\operator.py` | 判断控件树中是否有可见、非 Document、尺寸有效的目标文本。 |
+| `uia_tree_has_visible_text()` | `.\utools\ui\operator.py` | 判断控件树中是否有可见、非 Document、尺寸有效的目标文本；优先 UIA 精确标题查询，未命中再递归扫描；`exact_title_only=True` 时跳过递归兜底。 |
 
 ## UI 截图模块
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
 | `capture_relative_crop()` | `.\utools\ui\screenshot.py` | 对目标窗口截图，并按相对比例裁剪保存；用于保存收款码白色卡片区域。 |
+| `capture_control_visual_probe()` | `.\utools\ui\screenshot.py` | 截取目标窗口并缩小为灰度像素探针，用于低开销判断点击前后页面是否明显变化。 |
+| `compare_control_visual_probes()` | `.\utools\ui\screenshot.py` | 比较两个视觉探针，返回超过像素差阈值的变化像素比例。 |
 | `_get_control_rectangle()` | `.\utools\ui\screenshot.py` | 获取目标控件矩形，用于截图裁剪计算。 |
 
 ## 微信收款单业务模块
@@ -72,15 +76,19 @@
 | `submit_create_pay_order()` | `.\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
 | `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片；默认先按 UIA 元素查找按钮，点击后未进入“生成分享图”会重新获取窗口并按配置重试。 |
 | `return_to_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 在截图保存后返回两次，等待目标订单出现“暂无人付款”或“已支付”；API 会在二维码响应返回后于后台执行此步骤。 |
-| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试，不终止支付任务。如果重进后 UIA 在状态加载超时内仍读不到订单号/状态，也会记录次数并再次重进。检测到已支付后先同步执行可选的 `on_paid` 回调，再进入详情关闭、确认、删除收款单；关闭/删除阶段按 0.05 秒轮询界面状态。 |
+| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试。页面有可读文本且不包含“暂无人付款”时按已支付通过；完全无文本时再次重进。达到 `max_payment_refresh_count`（默认 5）次且明确仍为“暂无人付款”时返回 `paid=False`，进入未支付订单详情关闭并删除收款单。进入详情时点击目标订单卡片主体并最多尝试 3 个位置，通过 UIA 标题或画面变化确认切页。检测到已支付后先同步执行可选的 `on_paid` 回调。关闭/删除快速模式只读取一次窗口矩形，缓存绝对坐标后用短等待连续点击。 |
 | `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；点击后立即丢弃旧 UIA `root`，从空对象重新获取界面信息，等待订单状态加载完成并返回新窗口对象。 |
-| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出目标订单的明确状态，状态必须是“暂无人付款”或“已支付”；窗口短暂不可用时继续轮询，超时时输出订单号、两种状态文本和最近窗口状态。 |
-| `_wait_for_visible_text_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定文本出现，并在轮询期间持续按窗口标题/PID 重新获取 UIA 窗口对象。 |
-| `_wait_for_text_to_disappear_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定弹窗文本消失，并在轮询期间重新获取窗口；用于确认关闭/删除完成后立即继续。 |
-| `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，按窗口标题重新获取当前可用 UIA 顶级窗口；PID 失效时回退为按标题查找。微信重建 UIA 窗口期间会在限定时间内轮询，持续不可用时抛出 `PayOrderWindowUnavailableError` 交由等待流程重试。 |
+| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出可判定状态；明确“暂无人付款”返回未支付，页面有其他可读文本则返回已支付，完全无文本时继续轮询并在超时后输出诊断。 |
+| `_wait_for_visible_text_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定文本出现；先检查当前有效窗口，未命中且达到间隔后才按窗口标题/PID 重新获取 UIA 对象。 |
+| `_capture_payment_detail_visual_probe()` | `.\utools\wechat\pay_order.py` | 内部辅助，安全捕获详情页切换前后的窗口视觉探针；截图不可用时返回 `None` 并继续使用 UIA 判断。 |
+| `_wait_for_payment_detail_after_order_click()` | `.\utools\wechat\pay_order.py` | 内部辅助，在目标订单卡片内多点重试，使用 UIA“收款记录”标题或视觉变化确认进入详情。 |
+| `_build_order_card_click_candidates()` | `.\utools\wechat\pay_order.py` | 内部辅助，围绕已识别的目标订单位置生成不跨卡片的主体点击候选点。 |
+| `_wait_for_text_to_disappear_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定弹窗文本消失；先检查当前有效窗口，必要时才重新获取；确认文本以精确标题暴露时可跳过递归全树扫描，用于关闭/删除完成后立即继续。 |
+| `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，当前窗口矩形仍有效时直接复用，否则按窗口标题重新获取 UIA 顶级窗口；PID 失效时回退为按标题查找。微信重建 UIA 窗口期间会在限定时间内轮询，持续不可用时抛出 `PayOrderWindowUnavailableError` 交由等待流程重试。 |
 | `_control_has_valid_rectangle()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断旧窗口对象是否仍有可用矩形，作为重新获取失败时的兜底。 |
 | `PayOrderWindowUnavailableError` | `.\utools\wechat\pay_order.py` | 微信收款单窗口在限定时间内仍无法通过 UIA 重新获取时使用的内部异常类型，供支付等待和界面轮询流程判定为可重试状态。 |
-| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取目标订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形、合并卡片容器和单一页面状态兜底。页面只出现“已支付”或“暂无人付款”其中之一时，即使订单号未暴露为 UIA 文本，也按该唯一状态识别，避免无效刷新。 |
+| `_collect_visible_uia_snapshot()` | `.\utools\wechat\pay_order.py` | 内部辅助，一次遍历收集订单状态识别所需的可见文本和矩形，供订单号、支付状态和卡片匹配复用，避免重复扫描 UIA 树。 |
+| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取目标订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形、合并卡片容器和整页文本兜底。明确包含“暂无人付款”时返回未支付；页面有其他可读文本且不含该文案时返回已支付；完全无文本时返回未知。 |
 | `_find_paid_order_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和“已支付”文本的可见矩形位置判断目标订单卡片，并返回点击点。 |
 | `_find_order_status_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和指定状态文本判断是否处于同一张订单卡片，并返回该状态文本中心点。 |
 | `_find_smallest_control_containing_texts()` | `.\utools\wechat\pay_order.py` | 内部辅助，查找同时包含订单号和状态文本的最小可见 UIA 容器，用于兼容刷新后被合并的订单卡片。 |
@@ -90,6 +98,7 @@
 | `_find_visible_text_rects()` | `.\utools\wechat\pay_order.py` | 内部辅助，遍历 UIA 树并提取包含指定文本的可见控件矩形。 |
 | `_looks_like_same_order_card()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断订单号文本和已支付文本是否像处于同一张订单卡片。 |
 | `_rect_center()` | `.\utools\wechat\pay_order.py` | 内部辅助，计算矩形中心点。 |
+| `_point_above_rect()` | `.\utools\wechat\pay_order.py` | 内部辅助，从状态文本矩形向上偏移到订单卡片主体，避免点击不响应的底部状态行。 |
 | `_click_generate_qr_button()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取“生成收款码”UIA 元素的实时矩形并真实点击元素中心；找不到元素时才按配置坐标兜底，并返回点击方式。 |
 | `_click_labeled_input_or_relative()` | `.\utools\wechat\pay_order.py` | 内部辅助，点击带标签的输入区域，优先查找标签附近的 `Edit`/`ComboBox` 控件，找不到再按相对坐标兜底。 |
 | `_find_edit_control_near_text()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据标签文本寻找同一行附近的可见输入控件。 |
@@ -107,7 +116,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态重进重试和快速模式等待参数。 |
+| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态重进次数上限、订单卡片多点点击与视觉判定、输入和关闭删除坐标快速模式及过渡等待参数。 |
 | `DEFAULT_PID` | `.\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `.\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `.\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |
@@ -132,7 +141,7 @@
 | `create_app()` | `.\utools\api\pay_server.py` | 创建 Flask app，并注册 `POST /create` 端点。 |
 | `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点处理函数；在短等待内生成成功则返回二维码，超时则返回 `code=2`、预计时间和建议重试间隔；相同订单号复用已有任务。 |
 | `estimate_order()` | `.\utools\api\pay_server.py` | `POST /estimate` 端点处理函数，使用与 `/create` 相同的验签方式返回预计时间，不创建订单。 |
-| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用，识别支付成功后立即发送 webhook，回调完成后再关闭/删除收款单，并删除本地二维码图片。 |
+| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用；识别支付成功后立即发送 webhook，回调完成后再关闭/删除收款单。达到重进次数上限仍未支付时不发送成功 webhook，关闭删除收款单并清理失效二维码。 |
 | `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知，并用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`。 |
 | `_validate_create_payload()` | `.\utools\api\pay_server.py` | 校验 `/create` 请求必填参数：`pid`、`amount`、`timestamp`、`webhook`、`sign`。 |
 | `_verify_create_payload()` | `.\utools\api\pay_server.py` | 统一解析并验证 `/create`、`/estimate` 请求参数及 RSA 签名。 |
