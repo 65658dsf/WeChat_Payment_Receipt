@@ -72,14 +72,15 @@
 | `submit_create_pay_order()` | `.\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
 | `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片；默认先按 UIA 元素查找按钮，点击后未进入“生成分享图”会重新获取窗口并按配置重试。 |
 | `return_to_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 在截图保存后返回两次，等待目标订单出现“暂无人付款”或“已支付”；API 会在二维码响应返回后于后台执行此步骤。 |
-| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；如果重进后 UIA 在状态加载超时内仍读不到订单号/状态，会记录次数并再次重进，不终止支付任务。检测到已支付后进入详情并关闭、确认、删除收款单；关闭/删除阶段按 0.05 秒轮询界面状态。 |
-| `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；刷新后等待订单状态加载完成并返回重新获取到的窗口对象。 |
-| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出目标订单的明确状态，状态必须是“暂无人付款”或“已支付”；超时时输出订单号和两种状态文本的 UIA 读取结果。 |
+| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试，不终止支付任务。如果重进后 UIA 在状态加载超时内仍读不到订单号/状态，也会记录次数并再次重进。检测到已支付后先同步执行可选的 `on_paid` 回调，再进入详情关闭、确认、删除收款单；关闭/删除阶段按 0.05 秒轮询界面状态。 |
+| `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；点击后立即丢弃旧 UIA `root`，从空对象重新获取界面信息，等待订单状态加载完成并返回新窗口对象。 |
+| `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出目标订单的明确状态，状态必须是“暂无人付款”或“已支付”；窗口短暂不可用时继续轮询，超时时输出订单号、两种状态文本和最近窗口状态。 |
 | `_wait_for_visible_text_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定文本出现，并在轮询期间持续按窗口标题/PID 重新获取 UIA 窗口对象。 |
 | `_wait_for_text_to_disappear_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定弹窗文本消失，并在轮询期间重新获取窗口；用于确认关闭/删除完成后立即继续。 |
-| `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，按窗口标题重新获取当前可用 UIA 顶级窗口；PID 失效时回退为按标题查找。 |
+| `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，按窗口标题重新获取当前可用 UIA 顶级窗口；PID 失效时回退为按标题查找。微信重建 UIA 窗口期间会在限定时间内轮询，持续不可用时抛出 `PayOrderWindowUnavailableError` 交由等待流程重试。 |
 | `_control_has_valid_rectangle()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断旧窗口对象是否仍有可用矩形，作为重新获取失败时的兜底。 |
-| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取目标订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形、合并卡片容器和单一页面状态兜底。 |
+| `PayOrderWindowUnavailableError` | `.\utools\wechat\pay_order.py` | 微信收款单窗口在限定时间内仍无法通过 UIA 重新获取时使用的内部异常类型，供支付等待和界面轮询流程判定为可重试状态。 |
+| `_read_order_payment_status()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取目标订单状态，返回 `unpaid`、`paid` 或 `unknown`；支持独立文本矩形、合并卡片容器和单一页面状态兜底。页面只出现“已支付”或“暂无人付款”其中之一时，即使订单号未暴露为 UIA 文本，也按该唯一状态识别，避免无效刷新。 |
 | `_find_paid_order_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和“已支付”文本的可见矩形位置判断目标订单卡片，并返回点击点。 |
 | `_find_order_status_card_click_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据订单号和指定状态文本判断是否处于同一张订单卡片，并返回该状态文本中心点。 |
 | `_find_smallest_control_containing_texts()` | `.\utools\wechat\pay_order.py` | 内部辅助，查找同时包含订单号和状态文本的最小可见 UIA 容器，用于兼容刷新后被合并的订单卡片。 |
@@ -131,7 +132,7 @@
 | `create_app()` | `.\utools\api\pay_server.py` | 创建 Flask app，并注册 `POST /create` 端点。 |
 | `create_order()` | `.\utools\api\pay_server.py` | `/create` 端点处理函数；在短等待内生成成功则返回二维码，超时则返回 `code=2`、预计时间和建议重试间隔；相同订单号复用已有任务。 |
 | `estimate_order()` | `.\utools\api\pay_server.py` | `POST /estimate` 端点处理函数，使用与 `/create` 相同的验签方式返回预计时间，不创建订单。 |
-| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用，等待支付成功后关闭/删除收款单，发送 webhook，并删除本地二维码图片。 |
+| `_wait_paid_webhook_and_cleanup()` | `.\utools\api\pay_server.py` | 队列 worker 内部调用，识别支付成功后立即发送 webhook，回调完成后再关闭/删除收款单，并删除本地二维码图片。 |
 | `_post_payment_success_webhook()` | `.\utools\api\pay_server.py` | 向请求传入的 webhook 地址 POST 支付成功通知，并用 webhook 公钥加密 `trade_no+total_amount+trade_status` 生成 `sign`。 |
 | `_validate_create_payload()` | `.\utools\api\pay_server.py` | 校验 `/create` 请求必填参数：`pid`、`amount`、`timestamp`、`webhook`、`sign`。 |
 | `_verify_create_payload()` | `.\utools\api\pay_server.py` | 统一解析并验证 `/create`、`/estimate` 请求参数及 RSA 签名。 |

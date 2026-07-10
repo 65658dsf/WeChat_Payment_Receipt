@@ -125,7 +125,15 @@ class _PayOrderQueueWorker:
             qr_info = action_result.get("qr_code") or {}
             qr_path = str(qr_info.get("output_path") or "")
             job.qr_path = qr_path
-            pay_qrcode = file_to_base64(qr_path)
+            timings = dict(action_result.get("timings_seconds") or {})
+            stage_started_at = time.perf_counter()
+            try:
+                pay_qrcode = file_to_base64(qr_path)
+            finally:
+                timings["encode_qr_base64"] = round(
+                    time.perf_counter() - stage_started_at,
+                    3,
+                )
             job.response = {
                 "code": 1,
                 "msg": "success",
@@ -135,13 +143,13 @@ class _PayOrderQueueWorker:
                 },
             }
             creation_seconds = max(0.001, time.perf_counter() - job.started_at)
+            timings["create_response_total"] = round(creation_seconds, 3)
             with self._active_jobs_lock:
                 self._average_creation_seconds = (
                     self._average_creation_seconds * 0.7 + creation_seconds * 0.3
                 )
                 job.state = "waiting_payment"
             job.created_event.set()
-            timings = action_result.get("timings_seconds") or {}
             print(
                 f"订单二维码已生成并返回: {job.trade_no}, "
                 f"队列等待: {queue_wait_seconds}秒, 分段耗时: {timings}",
@@ -152,6 +160,9 @@ class _PayOrderQueueWorker:
             job.created_event.set()
             raise
 
+        background_started_at = time.perf_counter()
+        background_timings: Dict[str, float] = {}
+        stage_started_at = time.perf_counter()
         try:
             return_to_wait_payment_page(
                 root=None,
@@ -165,13 +176,31 @@ class _PayOrderQueueWorker:
                 f"二维码已返回，但自动返回等待付款页面失败，将通过重进小程序恢复: {exc}",
                 flush=True,
             )
+        finally:
+            background_timings["return_wait_page_background"] = round(
+                time.perf_counter() - stage_started_at,
+                3,
+            )
 
-        _wait_paid_webhook_and_cleanup(
+        payment_timings = _wait_paid_webhook_and_cleanup(
             config=self._config,
             trade_no=job.trade_no,
             amount=job.amount,
             webhook=job.webhook,
             qr_path=qr_path,
+        )
+        background_timings.update(payment_timings)
+        background_timings["background_total"] = round(
+            time.perf_counter() - background_started_at,
+            3,
+        )
+        background_timings["order_total_since_create_start"] = round(
+            time.perf_counter() - job.started_at,
+            3,
+        )
+        print(
+            f"订单后台处理结束: {job.trade_no}, 分段耗时: {background_timings}",
+            flush=True,
         )
         self._forget_job(job)
 
@@ -306,8 +335,39 @@ def _wait_paid_webhook_and_cleanup(
     amount: str,
     webhook: str,
     qr_path: str,
-) -> None:
+) -> Dict[str, float]:
     webhook_sent = False
+    workflow_started_at = time.perf_counter()
+    timings: Dict[str, float] = {}
+
+    def run_timed(name: str, action: Any) -> Any:
+        stage_started_at = time.perf_counter()
+        try:
+            return action()
+        finally:
+            timings[name] = round(time.perf_counter() - stage_started_at, 3)
+
+    def notify_payment_success() -> None:
+        nonlocal webhook_sent
+        print("支付成功，正在发送 Webhook", flush=True)
+        try:
+            run_timed(
+                "webhook_request",
+                lambda: _post_payment_success_webhook(
+                    webhook=webhook,
+                    trade_no=trade_no,
+                    amount=amount,
+                    webhook_public_key_path=config.webhook_public_key_path,
+                    timeout_seconds=config.webhook_timeout_seconds,
+                    retry_count=config.webhook_retry_count,
+                ),
+            )
+        except Exception:
+            traceback.print_exc()
+        else:
+            webhook_sent = True
+            print("Webhook 回调已完成，开始关闭并删除收款单", flush=True)
+
     try:
         wait_paid_then_close_pay_order(
             root=None,
@@ -315,22 +375,32 @@ def _wait_paid_webhook_and_cleanup(
             pid=config.window_pid,
             window_title=config.window_title,
             timeout_seconds=config.wait_paid_timeout_seconds,
+            on_paid=notify_payment_success,
+            timings_seconds=timings,
         )
-        print("支付成功", flush=True)
-        _post_payment_success_webhook(
-            webhook=webhook,
-            trade_no=trade_no,
-            amount=amount,
-            webhook_public_key_path=config.webhook_public_key_path,
-            timeout_seconds=config.webhook_timeout_seconds,
-            retry_count=config.webhook_retry_count,
-        )
-        webhook_sent = True
     except Exception:
+        if webhook_sent:
+            print("Webhook 已回调，后续关闭或删除收款单失败。", flush=True)
         traceback.print_exc()
     finally:
         if webhook_sent:
-            remove_file_if_exists(qr_path)
+            try:
+                run_timed(
+                    "cleanup_qr_file",
+                    lambda: remove_file_if_exists(qr_path),
+                )
+            except Exception:
+                traceback.print_exc()
+        timings["wait_paid_webhook_and_cleanup_total"] = round(
+            time.perf_counter() - workflow_started_at,
+            3,
+        )
+        print(
+            f"订单支付后处理耗时: {trade_no}, 分段耗时: {timings}",
+            flush=True,
+        )
+
+    return timings
 
 
 def _post_payment_success_webhook(

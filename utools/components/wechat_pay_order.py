@@ -62,6 +62,7 @@ class WechatPayOrderComponents:
     fast_input_coordinate_mode: bool = True
     wait_poll_interval_seconds: float = 0.05
     window_reacquire_interval_seconds: float = 0.25
+    window_reacquire_timeout_seconds: float = 3.0
     paste_select_wait_seconds: float = 0.01
     paste_after_wait_seconds: float = 0.02
     return_back_after_click_wait_seconds: float = 0.15
