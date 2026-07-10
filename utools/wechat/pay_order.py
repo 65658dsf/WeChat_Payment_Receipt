@@ -379,6 +379,7 @@ def wait_paid_then_close_pay_order(
     workflow_started_at = time.perf_counter()
     workflow_timings = timings_seconds if timings_seconds is not None else {}
     close_delete_window_rect: Optional[tuple[int, int, int, int]] = None
+    close_delete_fallback_clicks: list[Dict[str, Any]] = []
 
     def run_timed(name: str, action: Callable[[], Any]) -> Any:
         stage_started_at = time.perf_counter()
@@ -403,12 +404,7 @@ def wait_paid_then_close_pay_order(
                 left + int(width * x_ratio),
                 top + int(height * y_ratio),
             )
-        return _click_text_or_relative(
-            action_root,
-            text=text,
-            x_ratio=x_ratio,
-            y_ratio=y_ratio,
-        )
+        return _click_required_uia_text_element(action_root, text)
 
     def prepare_close_delete_coordinates(action_root: Any) -> tuple[int, int, int, int]:
         nonlocal close_delete_window_rect
@@ -425,14 +421,101 @@ def wait_paid_then_close_pay_order(
         close_delete_window_rect = (left, top, width, height)
         return close_delete_window_rect
 
-    def wait_close_delete_transition(action_root: Any, final: bool = False) -> Any:
-        wait_seconds = (
-            components.fast_delete_complete_wait_seconds
-            if final
-            else components.fast_close_delete_step_wait_seconds
+    close_delete_verify_timeout = (
+        components.fast_close_delete_verify_timeout_seconds
+        if components.fast_close_delete_coordinate_mode
+        else 8.0
+    )
+
+    def wait_visible_after_close_delete_click(
+        action_root: Any,
+        expected_text: str,
+        retry_text: str,
+        retry_x_ratio: float,
+        retry_y_ratio: float,
+    ) -> Optional[Any]:
+        initial_timeout = (
+            components.fast_close_delete_retry_wait_seconds
+            if components.fast_close_delete_coordinate_mode
+            else close_delete_verify_timeout
         )
-        time.sleep(max(0.0, wait_seconds))
-        return action_root
+        visible_root = _wait_for_visible_text_reacquiring(
+            root=action_root,
+            text=expected_text,
+            timeout_seconds=initial_timeout,
+            pid=pid,
+            window_title=window_title,
+        )
+        if visible_root is not None or not components.fast_close_delete_coordinate_mode:
+            return visible_root
+
+        retry_root = _reacquire_pay_order_root(None, pid, window_title)
+        retry_point = _click_text_or_relative(
+            retry_root,
+            text=retry_text,
+            x_ratio=retry_x_ratio,
+            y_ratio=retry_y_ratio,
+        )
+        close_delete_fallback_clicks.append(
+            {
+                "action_text": retry_text,
+                "expected_text": expected_text,
+                "click_point": {"x": retry_point[0], "y": retry_point[1]},
+            }
+        )
+        return _wait_for_visible_text_reacquiring(
+            root=retry_root,
+            text=expected_text,
+            timeout_seconds=close_delete_verify_timeout,
+            pid=pid,
+            window_title=window_title,
+        )
+
+    def wait_disappear_after_close_delete_click(
+        action_root: Any,
+        text: str,
+        retry_x_ratio: float,
+        retry_y_ratio: float,
+        exact_title_only: bool,
+    ) -> Optional[Any]:
+        initial_timeout = (
+            components.fast_close_delete_retry_wait_seconds
+            if components.fast_close_delete_coordinate_mode
+            else close_delete_verify_timeout
+        )
+        disappeared_root = _wait_for_text_to_disappear_reacquiring(
+            root=action_root,
+            text=text,
+            timeout_seconds=initial_timeout,
+            pid=pid,
+            window_title=window_title,
+            exact_title_only=exact_title_only,
+        )
+        if disappeared_root is not None or not components.fast_close_delete_coordinate_mode:
+            return disappeared_root
+
+        retry_root = _reacquire_pay_order_root(None, pid, window_title)
+        retry_point = _click_text_or_relative(
+            retry_root,
+            text=text,
+            x_ratio=retry_x_ratio,
+            y_ratio=retry_y_ratio,
+        )
+        close_delete_fallback_clicks.append(
+            {
+                "action_text": text,
+                "expected_text": f"{text}消失",
+                "click_point": {"x": retry_point[0], "y": retry_point[1]},
+            }
+        )
+        return _wait_for_text_to_disappear_reacquiring(
+            root=retry_root,
+            text=text,
+            timeout_seconds=close_delete_verify_timeout,
+            pid=pid,
+            window_title=window_title,
+            exact_title_only=exact_title_only,
+        )
 
     timeout = timeout_seconds
     deadline = None if timeout is None else time.time() + timeout
@@ -568,7 +651,11 @@ def wait_paid_then_close_pay_order(
             detected_order_point = order_card_point
             order_card_point = run_timed(
                 click_order_timing_name,
-                lambda: click_screen_point(*detected_order_point),
+                lambda: _click_order_card_element_or_point(
+                    root,
+                    str(order_no),
+                    detected_order_point,
+                ),
             )
         else:
             order_card_point = run_timed(
@@ -587,6 +674,7 @@ def wait_paid_then_close_pay_order(
                 root=root,
                 first_click_point=order_card_point,
                 before_probe=before_detail_probe,
+                order_no=str(order_no),
                 pid=pid,
                 window_title=window_title,
             ),
@@ -600,6 +688,10 @@ def wait_paid_then_close_pay_order(
             )
         order_card_point = detail_result["click_point"]
         root = detail_root
+        run_timed(
+            "validate_payment_detail_before_close",
+            lambda: _validate_payment_detail_before_close(root, str(order_no)),
+        )
         if components.fast_close_delete_coordinate_mode:
             run_timed(
                 "prepare_close_delete_coordinates",
@@ -617,16 +709,12 @@ def wait_paid_then_close_pay_order(
         )
         close_menu_root = run_timed(
             "wait_close_menu",
-            lambda: (
-                wait_close_delete_transition(root)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_visible_text_reacquiring(
-                    root=root,
-                    text=components.close_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                )
+            lambda: wait_visible_after_close_delete_click(
+                action_root=root,
+                expected_text=components.close_pay_order_text,
+                retry_text=components.more_action_text,
+                retry_x_ratio=components.more_action_x_ratio,
+                retry_y_ratio=components.more_action_y_ratio,
             ),
         )
         if close_menu_root is None:
@@ -644,29 +732,22 @@ def wait_paid_then_close_pay_order(
         )
         confirm_close_root = run_timed(
             "wait_confirm_close",
-            lambda: (
-                wait_close_delete_transition(root)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_visible_text_reacquiring(
-                    root=root,
-                    text=components.confirm_close_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                )
+            lambda: wait_visible_after_close_delete_click(
+                action_root=root,
+                expected_text=components.confirm_close_pay_order_text,
+                retry_text=components.close_pay_order_text,
+                retry_x_ratio=components.close_pay_order_x_ratio,
+                retry_y_ratio=components.close_pay_order_y_ratio,
             ),
         )
         if confirm_close_root is None:
             raise TimeoutError(f"点击关闭收款单后未看到“{components.confirm_close_pay_order_text}”.")
         root = confirm_close_root
-        confirm_close_uses_exact_title = (
-            not components.fast_close_delete_coordinate_mode
-            and uia_tree_has_visible_text(
-                root,
-                components.confirm_close_pay_order_text,
-                max_depth=8,
-                exact_title_only=True,
-            )
+        confirm_close_uses_exact_title = uia_tree_has_visible_text(
+            root,
+            components.confirm_close_pay_order_text,
+            max_depth=8,
+            exact_title_only=True,
         )
 
         confirm_close_point = run_timed(
@@ -680,17 +761,12 @@ def wait_paid_then_close_pay_order(
         )
         closed_root = run_timed(
             "wait_close_complete",
-            lambda: (
-                wait_close_delete_transition(root)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_text_to_disappear_reacquiring(
-                    root=root,
-                    text=components.confirm_close_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                    exact_title_only=confirm_close_uses_exact_title,
-                )
+            lambda: wait_disappear_after_close_delete_click(
+                action_root=root,
+                text=components.confirm_close_pay_order_text,
+                retry_x_ratio=components.confirm_close_pay_order_x_ratio,
+                retry_y_ratio=components.confirm_close_pay_order_y_ratio,
+                exact_title_only=confirm_close_uses_exact_title,
             ),
         )
         if closed_root is None:
@@ -708,16 +784,12 @@ def wait_paid_then_close_pay_order(
         )
         delete_menu_root = run_timed(
             "wait_delete_menu",
-            lambda: (
-                wait_close_delete_transition(root)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_visible_text_reacquiring(
-                    root=root,
-                    text=components.delete_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                )
+            lambda: wait_visible_after_close_delete_click(
+                action_root=root,
+                expected_text=components.delete_pay_order_text,
+                retry_text=components.more_action_text,
+                retry_x_ratio=components.more_action_x_ratio,
+                retry_y_ratio=components.more_action_y_ratio,
             ),
         )
         if delete_menu_root is None:
@@ -737,16 +809,12 @@ def wait_paid_then_close_pay_order(
         )
         confirm_delete_root = run_timed(
             "wait_confirm_delete",
-            lambda: (
-                wait_close_delete_transition(root)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_visible_text_reacquiring(
-                    root=root,
-                    text=components.confirm_delete_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                )
+            lambda: wait_visible_after_close_delete_click(
+                action_root=root,
+                expected_text=components.confirm_delete_pay_order_text,
+                retry_text=components.delete_pay_order_text,
+                retry_x_ratio=components.delete_pay_order_x_ratio,
+                retry_y_ratio=components.delete_pay_order_y_ratio,
             ),
         )
         if confirm_delete_root is None:
@@ -754,14 +822,11 @@ def wait_paid_then_close_pay_order(
                 f"点击删除收款单后未看到“{components.confirm_delete_pay_order_text}”."
             )
         root = confirm_delete_root
-        confirm_delete_uses_exact_title = (
-            not components.fast_close_delete_coordinate_mode
-            and uia_tree_has_visible_text(
-                root,
-                components.confirm_delete_pay_order_text,
-                max_depth=8,
-                exact_title_only=True,
-            )
+        confirm_delete_uses_exact_title = uia_tree_has_visible_text(
+            root,
+            components.confirm_delete_pay_order_text,
+            max_depth=8,
+            exact_title_only=True,
         )
 
         confirm_delete_point = run_timed(
@@ -775,21 +840,30 @@ def wait_paid_then_close_pay_order(
         )
         deleted_root = run_timed(
             "wait_delete_complete",
-            lambda: (
-                wait_close_delete_transition(root, final=True)
-                if components.fast_close_delete_coordinate_mode
-                else _wait_for_text_to_disappear_reacquiring(
-                    root=root,
-                    text=components.confirm_delete_pay_order_text,
-                    timeout_seconds=8.0,
-                    pid=pid,
-                    window_title=window_title,
-                    exact_title_only=confirm_delete_uses_exact_title,
-                )
+            lambda: wait_disappear_after_close_delete_click(
+                action_root=root,
+                text=components.confirm_delete_pay_order_text,
+                retry_x_ratio=components.confirm_delete_pay_order_x_ratio,
+                retry_y_ratio=components.confirm_delete_pay_order_y_ratio,
+                exact_title_only=confirm_delete_uses_exact_title,
             ),
         )
         if deleted_root is None:
             raise TimeoutError(f"点击“{components.confirm_delete_pay_order_text}”后弹窗未关闭.")
+        verified_deleted_root = run_timed(
+            "verify_order_deleted",
+            lambda: _wait_for_order_deleted(
+                root=deleted_root,
+                order_no=str(order_no),
+                timeout_seconds=components.delete_verification_timeout_seconds,
+                pid=pid,
+                window_title=window_title,
+            ),
+        )
+        if verified_deleted_root is None:
+            raise TimeoutError(
+                f"删除操作后未确认订单“{order_no}”已从收款单列表消失."
+            )
 
         return {
             "paid": not payment_failed,
@@ -803,6 +877,7 @@ def wait_paid_then_close_pay_order(
             "last_status": last_status,
             "payment_detail_detection": detail_result["detection"],
             "order_card_click_attempts": detail_result["attempts"],
+            "close_delete_fallback_clicks": close_delete_fallback_clicks,
             "timings_seconds": workflow_timings,
             "order_card_click_point": {
                 "x": order_card_point[0],
@@ -960,26 +1035,74 @@ def _wait_for_payment_detail_after_order_click(
     root: Any,
     first_click_point: tuple[int, int],
     before_probe: Optional[Dict[str, Any]],
+    order_no: str = "",
     pid: Optional[int] = DEFAULT_PID,
     window_title: str = DEFAULT_WINDOW_TITLE,
 ) -> Dict[str, Any]:
     """点击订单卡片主体并通过 UIA 文本或画面变化确认进入详情页."""
 
     components = WECHAT_PAY_ORDER
-    candidates = _build_order_card_click_candidates(root, first_click_point)
     attempts: list[Dict[str, Any]] = []
+    current_root = root
     current_probe = before_probe
     last_point = first_click_point
+    max_attempts = max(1, int(components.order_card_click_max_attempts))
 
-    for index, point in enumerate(candidates):
+    for index in range(max_attempts):
+        root_reacquired = False
+        refreshed_status: Optional[Dict[str, Any]] = None
         if index > 0:
-            current_probe = _capture_payment_detail_visual_probe(root)
-            click_screen_point(*point)
-        last_point = point
+            print(
+                f"订单卡片第{index}次点击后未进入“{components.payment_detail_title}”，"
+                "重新读取微信收款单窗口和订单元素后重试.",
+                flush=True,
+            )
+            time.sleep(components.order_card_reacquire_retry_wait_seconds)
+            try:
+                current_root = _reacquire_pay_order_root(None, pid, window_title)
+                root_reacquired = True
+                refreshed_status = _read_order_payment_status(current_root, order_no)
+                if refreshed_status.get("status") == "unknown":
+                    current_root, refreshed_status = wait_order_status_loaded(
+                        root=current_root,
+                        order_no=order_no,
+                        pid=pid,
+                        window_title=window_title,
+                        timeout_seconds=(
+                            components.order_card_retry_status_timeout_seconds
+                        ),
+                    )
+            except (TimeoutError, PayOrderWindowUnavailableError) as exc:
+                attempts.append(
+                    {
+                        "attempt": index + 1,
+                        "click_performed": False,
+                        "root_reacquired": root_reacquired,
+                        "reacquire_error": str(exc),
+                    }
+                )
+                continue
+
+            refreshed_point = refreshed_status.get("click_point")
+            if refreshed_point is None:
+                refreshed_point = _relative_screen_point(
+                    current_root,
+                    components.paid_card_x_ratio,
+                    components.paid_card_y_ratio,
+                )
+            current_probe = _capture_payment_detail_visual_probe(current_root)
+            last_point = _click_order_card_element_or_point(
+                current_root,
+                order_no,
+                refreshed_point,
+            )
         time.sleep(components.payment_detail_click_wait_seconds)
 
-        after_probe = _capture_payment_detail_visual_probe(root)
+        after_probe = _capture_payment_detail_visual_probe(current_root)
+        time.sleep(components.payment_detail_visual_settle_wait_seconds)
+        settled_probe = _capture_payment_detail_visual_probe(current_root)
         visual_change_ratio: Optional[float] = None
+        settled_visual_change_ratio: Optional[float] = None
         if current_probe is not None and after_probe is not None:
             try:
                 visual_change_ratio = compare_control_visual_probes(
@@ -991,40 +1114,80 @@ def _wait_for_payment_detail_after_order_click(
                 )
             except (TypeError, ValueError):
                 visual_change_ratio = None
+        if current_probe is not None and settled_probe is not None:
+            try:
+                settled_visual_change_ratio = compare_control_visual_probes(
+                    current_probe,
+                    settled_probe,
+                    pixel_difference_threshold=(
+                        components.payment_detail_visual_pixel_threshold
+                    ),
+                )
+            except (TypeError, ValueError):
+                settled_visual_change_ratio = None
 
         visual_changed = (
-            visual_change_ratio is not None
-            and visual_change_ratio >= components.payment_detail_visual_change_ratio
+            settled_visual_change_ratio is not None
+            and settled_visual_change_ratio
+            >= components.payment_detail_visual_change_ratio
         )
-        title_found = False
-        if not visual_changed:
+        check_root = current_root
+        if visual_changed:
             try:
-                title_found = uia_tree_has_visible_text(
-                    root,
-                    components.payment_detail_title,
-                    max_depth=8,
-                )
-            except Exception:
-                title_found = False
+                check_root = _reacquire_pay_order_root(None, pid, window_title)
+            except PayOrderWindowUnavailableError:
+                check_root = current_root
+        page_text = ""
+        try:
+            page_text = _collect_visible_uia_text(check_root)
+        except Exception:
+            page_text = ""
+        title_found = components.payment_detail_title in page_text
+        list_page_visible = _is_order_list_page_text(page_text, order_no)
+        unexpected_page_visible = any(
+            text in page_text
+            for text in (
+                components.create_pay_order_title,
+                components.created_dialog_title,
+                components.generated_share_title,
+            )
+        )
         attempts.append(
             {
                 "attempt": index + 1,
-                "click_point": {"x": point[0], "y": point[1]},
+                "click_performed": True,
+                "click_point": {"x": last_point[0], "y": last_point[1]},
+                "root_reacquired": root_reacquired,
+                "refreshed_status": refreshed_status,
                 "title_found": title_found,
                 "visual_change_ratio": visual_change_ratio,
+                "settled_visual_change_ratio": settled_visual_change_ratio,
                 "visual_changed": visual_changed,
+                "list_page_visible": list_page_visible,
+                "unexpected_page_visible": unexpected_page_visible,
             }
         )
-        if title_found or visual_changed:
+        if unexpected_page_visible:
             return {
-                "root": root,
-                "click_point": point,
+                "root": None,
+                "click_point": last_point,
+                "detection": "unexpected_page",
+                "attempts": attempts,
+            }
+        if title_found or (
+            visual_changed
+            and not list_page_visible
+            and not unexpected_page_visible
+        ):
+            return {
+                "root": check_root,
+                "click_point": last_point,
                 "detection": "uia_title" if title_found else "visual_change",
                 "attempts": attempts,
             }
 
     detail_root = _wait_for_visible_text_reacquiring(
-        root=root,
+        root=current_root,
         text=components.payment_detail_title,
         timeout_seconds=components.payment_detail_final_wait_seconds,
         pid=pid,
@@ -1038,32 +1201,68 @@ def _wait_for_payment_detail_after_order_click(
     }
 
 
-def _build_order_card_click_candidates(
+def _is_order_list_page_text(page_text: str, order_no: str = "") -> bool:
+    components = WECHAT_PAY_ORDER
+    list_header_found = (
+        components.create_pay_order_button_text in page_text
+        or components.all_pay_orders_text in page_text
+    )
+    list_status_found = order_no in page_text and (
+        components.wait_payment_status_text in page_text
+        or components.paid_count_text in page_text
+    )
+    return list_header_found or list_status_found
+
+
+def _validate_payment_detail_before_close(root: Any, order_no: str = "") -> str:
+    """关闭前排除列表页和创建页，避免后续操作落到“发起收款”等其他元素."""
+
+    page_text = _collect_visible_uia_text(root)
+    components = WECHAT_PAY_ORDER
+    if components.payment_detail_title in page_text:
+        return page_text
+    if components.create_pay_order_title in page_text:
+        raise RuntimeError("当前仍在“创建收款单”页面，已停止关闭/删除操作.")
+    if _is_order_list_page_text(page_text, order_no):
+        raise RuntimeError("当前仍在收款单列表，已停止关闭/删除操作.")
+    if components.generated_share_title in page_text:
+        raise RuntimeError("当前仍在“生成分享图”页面，已停止关闭/删除操作.")
+    return page_text
+
+
+def _wait_for_order_deleted(
     root: Any,
-    first_click_point: tuple[int, int],
-) -> list[tuple[int, int]]:
-    """围绕已定位的目标订单生成卡片主体点击候选点，不跨到其他订单."""
+    order_no: str,
+    timeout_seconds: float,
+    pid: Optional[int] = DEFAULT_PID,
+    window_title: str = DEFAULT_WINDOW_TITLE,
+) -> Optional[Any]:
+    """确认删除后已回到列表，且目标订单号不再出现在可见 UIA 文本中."""
 
-    root_info = uia_control_search_info(root)
-    rectangle = root_info.get("rectangle") or {}
-    left = int(rectangle.get("left") or 0)
-    top = int(rectangle.get("top") or 0)
-    width = int(rectangle.get("width") or 0)
-    height = int(rectangle.get("height") or 0)
-    if width <= 0 or height <= 0:
-        return [first_click_point]
-
-    right = left + width - 1
-    bottom = top + height - 1
-    candidates: list[tuple[int, int]] = []
-    for x_offset_ratio, y_offset_ratio in WECHAT_PAY_ORDER.order_card_click_retry_offsets:
-        point = (
-            min(right, max(left, first_click_point[0] + int(width * x_offset_ratio))),
-            min(bottom, max(top, first_click_point[1] + int(height * y_offset_ratio))),
+    deadline = time.time() + timeout_seconds
+    current_root = root
+    next_reacquire_at = 0.0
+    while time.time() < deadline:
+        now = time.time()
+        if now >= next_reacquire_at:
+            try:
+                current_root = _reacquire_pay_order_root(None, pid, window_title)
+            except PayOrderWindowUnavailableError:
+                time.sleep(WECHAT_PAY_ORDER.wait_poll_interval_seconds)
+                continue
+            next_reacquire_at = now + WECHAT_PAY_ORDER.window_reacquire_interval_seconds
+        try:
+            page_text = _collect_visible_uia_text(current_root)
+        except Exception:
+            page_text = ""
+        list_page_visible = (
+            WECHAT_PAY_ORDER.create_pay_order_button_text in page_text
+            or WECHAT_PAY_ORDER.all_pay_orders_text in page_text
         )
-        if point not in candidates:
-            candidates.append(point)
-    return candidates or [first_click_point]
+        if list_page_visible and (not order_no or order_no not in page_text):
+            return current_root
+        time.sleep(WECHAT_PAY_ORDER.wait_poll_interval_seconds)
+    return None
 
 
 def _wait_for_text_to_disappear_reacquiring(
@@ -1440,6 +1639,37 @@ def _rect_center(rectangle: Dict[str, int]) -> tuple[int, int]:
 def _point_above_rect(rectangle: Dict[str, int], offset_pixels: int) -> tuple[int, int]:
     center_x, center_y = _rect_center(rectangle)
     return center_x, center_y - max(0, offset_pixels)
+
+
+def _click_order_card_element_or_point(
+    root: Any,
+    order_no: str,
+    fallback_point: tuple[int, int],
+) -> tuple[int, int]:
+    """优先按订单号 UIA 元素实时矩形点击卡片，元素不可用时才使用识别点."""
+
+    if order_no:
+        target = find_uia_click_target(root, text=order_no, max_depth=10)
+        if target is not None:
+            try:
+                point, _target_info, _method = _click_uia_control_center(
+                    target,
+                    physical_click=True,
+                )
+                return point
+            except Exception:
+                pass
+    return click_screen_point(*fallback_point)
+
+
+def _click_required_uia_text_element(root: Any, text: str) -> tuple[int, int]:
+    """点击必需的 UIA 文本元素；找不到时停止，避免危险的坐标误点击."""
+
+    target = find_uia_click_target(root, text=text, max_depth=10)
+    if target is None:
+        raise RuntimeError(f"未找到可操作的“{text}”界面元素，已停止坐标兜底点击.")
+    point, _target_info, _method = _click_uia_control_center(target)
+    return point
 
 
 def _click_generate_qr_button(root: Any) -> Dict[str, Any]:

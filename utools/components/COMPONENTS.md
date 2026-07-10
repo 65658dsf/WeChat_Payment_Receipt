@@ -16,7 +16,7 @@
 | `get_process_component_info()` | `.\utools\ui\inspector.py` | 获取指定窗口/进程的组件树，优先走 UIA，失败时回退 Win32。支持按 PID、窗口标题、顶级窗口 hwnd 精确匹配。 |
 | `find_windows_by_title()` | `.\utools\ui\inspector.py` | 按顶级窗口标题查找窗口信息和 PID。 |
 | `_collect_by_uia()` | `.\utools\ui\inspector.py` | UIA 后端采集入口，返回顶级窗口和组件列表。 |
-| `_find_uia_top_windows()` | `.\utools\ui\inspector.py` | 在 UIA 顶级窗口中按 PID、标题、hwnd 查找候选窗口，并按可用性排序。 |
+| `_find_uia_top_windows()` | `.\utools\ui\inspector.py` | 在 UIA 顶级窗口中按 PID、标题、hwnd 查找候选窗口；优先标题精确匹配，再按可用性排序，避免误选标题包含相同词语的浏览器窗口。 |
 | `_uia_window_sort_key()` | `.\utools\ui\inspector.py` | 给 UIA 顶级窗口排序，优先可见、位置正常、面积大的窗口。 |
 | `_walk_uia_tree()` | `.\utools\ui\inspector.py` | 递归遍历 UIA 控件树并写入组件列表。 |
 | `_uia_control_to_info()` | `.\utools\ui\inspector.py` | 将 UIA 控件包装成 JSON 可序列化的组件信息。 |
@@ -76,13 +76,15 @@
 | `submit_create_pay_order()` | `.\utools\wechat\pay_order.py` | 点击“创建”，等待“已创建”弹窗出现。 |
 | `generate_and_capture_qr_code()` | `.\utools\wechat\pay_order.py` | 点击“生成收款码”，进入分享图页面后裁剪保存中间白色收款码卡片；默认先按 UIA 元素查找按钮，点击后未进入“生成分享图”会重新获取窗口并按配置重试。 |
 | `return_to_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 在截图保存后返回两次，等待目标订单出现“暂无人付款”或“已支付”；API 会在二维码响应返回后于后台执行此步骤。 |
-| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试。页面有可读文本且不包含“暂无人付款”时按已支付通过；完全无文本时再次重进。达到 `max_payment_refresh_count`（默认 5）次且明确仍为“暂无人付款”时返回 `paid=False`，进入未支付订单详情关闭并删除收款单。进入详情时点击目标订单卡片主体并最多尝试 3 个位置，通过 UIA 标题或画面变化确认切页。检测到已支付后先同步执行可选的 `on_paid` 回调。关闭/删除快速模式只读取一次窗口矩形，缓存绝对坐标后用短等待连续点击。 |
+| `wait_paid_then_close_pay_order()` | `.\utools\wechat\pay_order.py` | 在主界面通过“重新进入小程序”刷新；窗口短暂重建且 UIA 枚举不到时会持续重试。页面有可读文本且不包含“暂无人付款”时按已支付通过；完全无文本时再次重进。达到 `max_payment_refresh_count`（默认 5）次且明确仍为“暂无人付款”时返回 `paid=False`，进入未支付订单详情关闭并删除收款单。订单卡片优先按订单号 UIA 元素实时矩形点击；关闭、确认、删除和更多操作必须命中对应 UIA 文本元素，进入关闭流程前排除列表页、创建页和分享图页面，最终确认目标订单已从列表消失才返回成功。 |
 | `refresh_wait_payment_page()` | `.\utools\wechat\pay_order.py` | 点击右上角小程序菜单，再点击“重新进入小程序”，用于等待支付期间刷新主界面；点击后立即丢弃旧 UIA `root`，从空对象重新获取界面信息，等待订单状态加载完成并返回新窗口对象。 |
 | `wait_order_status_loaded()` | `.\utools\wechat\pay_order.py` | 等待主界面加载出可判定状态；明确“暂无人付款”返回未支付，页面有其他可读文本则返回已支付，完全无文本时继续轮询并在超时后输出诊断。 |
 | `_wait_for_visible_text_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定文本出现；先检查当前有效窗口，未命中且达到间隔后才按窗口标题/PID 重新获取 UIA 对象。 |
 | `_capture_payment_detail_visual_probe()` | `.\utools\wechat\pay_order.py` | 内部辅助，安全捕获详情页切换前后的窗口视觉探针；截图不可用时返回 `None` 并继续使用 UIA 判断。 |
-| `_wait_for_payment_detail_after_order_click()` | `.\utools\wechat\pay_order.py` | 内部辅助，在目标订单卡片内多点重试，使用 UIA“收款记录”标题或视觉变化确认进入详情。 |
-| `_build_order_card_click_candidates()` | `.\utools\wechat\pay_order.py` | 内部辅助，围绕已识别的目标订单位置生成不跨卡片的主体点击候选点。 |
+| `_wait_for_payment_detail_after_order_click()` | `.\utools\wechat\pay_order.py` | 内部辅助，首次点击未进入详情时强制重新获取窗口并重新读取目标订单状态和元素矩形后重试；使用 UIA“收款记录”标题或稳定后的视觉变化确认切页，并排除列表页点击反馈。 |
+| `_is_order_list_page_text()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据列表标题、发起收款、目标订单号和状态摘要判断当前是否仍停留在收款单列表。 |
+| `_validate_payment_detail_before_close()` | `.\utools\wechat\pay_order.py` | 内部辅助，关闭前排除列表页、创建收款单页和生成分享图页，避免后续动作落到“发起收款”等无关元素。 |
+| `_wait_for_order_deleted()` | `.\utools\wechat\pay_order.py` | 内部辅助，确认删除后已回到收款单列表，且目标订单号已经从可见 UIA 文本中消失。 |
 | `_wait_for_text_to_disappear_reacquiring()` | `.\utools\wechat\pay_order.py` | 等待指定弹窗文本消失；先检查当前有效窗口，必要时才重新获取；确认文本以精确标题暴露时可跳过递归全树扫描，用于关闭/删除完成后立即继续。 |
 | `_reacquire_pay_order_root()` | `.\utools\wechat\pay_order.py` | 内部辅助，当前窗口矩形仍有效时直接复用，否则按窗口标题重新获取 UIA 顶级窗口；PID 失效时回退为按标题查找。微信重建 UIA 窗口期间会在限定时间内轮询，持续不可用时抛出 `PayOrderWindowUnavailableError` 交由等待流程重试。 |
 | `_control_has_valid_rectangle()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断旧窗口对象是否仍有可用矩形，作为重新获取失败时的兜底。 |
@@ -99,6 +101,8 @@
 | `_looks_like_same_order_card()` | `.\utools\wechat\pay_order.py` | 内部辅助，判断订单号文本和已支付文本是否像处于同一张订单卡片。 |
 | `_rect_center()` | `.\utools\wechat\pay_order.py` | 内部辅助，计算矩形中心点。 |
 | `_point_above_rect()` | `.\utools\wechat\pay_order.py` | 内部辅助，从状态文本矩形向上偏移到订单卡片主体，避免点击不响应的底部状态行。 |
+| `_click_order_card_element_or_point()` | `.\utools\wechat\pay_order.py` | 内部辅助，优先读取订单号 UIA 元素的实时矩形并点击元素中心，元素不可用时才使用已识别的订单卡片点。 |
+| `_click_required_uia_text_element()` | `.\utools\wechat\pay_order.py` | 内部辅助，操作关闭/确认/删除/更多操作等必需 UIA 文本元素；找不到元素时直接停止，不执行坐标兜底。 |
 | `_click_generate_qr_button()` | `.\utools\wechat\pay_order.py` | 内部辅助，读取“生成收款码”UIA 元素的实时矩形并真实点击元素中心；找不到元素时才按配置坐标兜底，并返回点击方式。 |
 | `_click_labeled_input_or_relative()` | `.\utools\wechat\pay_order.py` | 内部辅助，点击带标签的输入区域，优先查找标签附近的 `Edit`/`ComboBox` 控件，找不到再按相对坐标兜底。 |
 | `_find_edit_control_near_text()` | `.\utools\wechat\pay_order.py` | 内部辅助，根据标签文本寻找同一行附近的可见输入控件。 |
@@ -116,7 +120,7 @@
 
 | 函数/类 | 文件地址 | 作用 |
 | --- | --- | --- |
-| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态重进次数上限、订单卡片多点点击与视觉判定、输入和关闭删除坐标快速模式及过渡等待参数。 |
+| `WechatPayOrderComponents` | `.\utools\components\wechat_pay_order.py` | 保存微信收款单窗口标题、按钮文案、输入/订单卡片/菜单/裁剪区域坐标，以及元素优先点击、生成收款码重试、订单状态重进次数上限、订单卡片失败后的窗口重读重试与视觉判定参数；关闭删除坐标快速模式默认关闭。 |
 | `DEFAULT_PID` | `.\utools\components\wechat_pay_order.py` | 默认 PID，当前为 `None`，表示自动查找。 |
 | `DEFAULT_WINDOW_TITLE` | `.\utools\components\wechat_pay_order.py` | 默认窗口标题，当前为“微信收款单”。 |
 | `WECHAT_PAY_ORDER` | `.\utools\components\wechat_pay_order.py` | 默认的 `WechatPayOrderComponents` 实例。 |

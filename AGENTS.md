@@ -37,10 +37,11 @@ python -m py_compile main.py utools/ui/inspector.py utools/ui/operator.py utools
 - 不要把业务动作堆进 `main.py`；`main.py` 只保留配置和调用顺序。
 - 如果后续新增动作，例如填写金额、填写说明、点击创建，请优先新增到 `utools/wechat/pay_order.py`，底层通用控件查找能力复用 `utools/ui/operator.py`。
 - 当前微信小程序页面内的金额/说明输入框不稳定暴露为标准 `Edit` 控件。`fast_input_coordinate_mode=True` 时直接使用已维护的相对坐标点击两个自绘输入区，避免一次 UIA 输入框扫描耗时十几秒；金额数字通过小程序键盘坐标输入，订单号通过剪贴板粘贴。关闭快速模式后才尝试标签附近的输入控件。
-- 界面操作默认优先读取 UIA 元素、文本和输入控件，例如“创建”“生成收款码”“收款说明”“返回”等；只有小程序未暴露标准控件或点击失败时，才使用 `utools/components/wechat_pay_order.py` 里的窗口相对坐标兜底。关闭/删除收款单阶段在 `fast_close_delete_coordinate_mode=True` 时属于性能例外：进入详情后只读取一次窗口矩形，缓存后续绝对点击坐标，并按短过渡等待连续完成关闭和删除，避免每一步重复扫描 UIA 树。
+- 界面操作默认优先读取 UIA 元素、文本和输入控件，例如“创建”“生成收款码”“收款说明”“返回”等；只有小程序未暴露标准控件或点击失败时，才使用 `utools/components/wechat_pay_order.py` 里的窗口相对坐标兜底。关闭、确认、删除和更多操作不允许固定坐标兜底，必须命中对应 UIA 文本元素。
 - 标准 UIA 控件优先使用 `invoke_or_click()`，减少真实鼠标依赖；但金额数字键盘和部分小程序自绘区域仍可能需要坐标点击，必须在已登录、未锁屏、RDP 未断开的活动桌面运行。不要作为 Windows 服务或无交互桌面任务运行。
-- 创建收款单完成后会读取“生成收款码”UIA 元素的实时矩形，并真实点击元素中心进入“生成分享图”页面；这里不使用可能无效果的 UIA Invoke。随后按相对比例裁剪中间白色收款码卡片保存到 `outputs/`。如果点击后没有进入“生成分享图”，会按 `generate_qr_retry_count` 重新获取窗口并重试。截图保存后默认点击左上角返回两次，回到主界面等待付款列表；检测到“已支付”后先发送 Webhook，再进入详情关闭、确认、删除收款单。关闭快速模式时按 `wait_poll_interval_seconds` 轮询对应元素出现或消失；快速模式按 `fast_close_delete_step_wait_seconds`（默认 0.20 秒）衔接每一步，最终删除后等待 `fast_delete_complete_wait_seconds`（默认 0.40 秒）。
+- 创建收款单完成后会读取“生成收款码”UIA 元素的实时矩形，并真实点击元素中心进入“生成分享图”页面；这里不使用可能无效果的 UIA Invoke。随后按相对比例裁剪中间白色收款码卡片保存到 `outputs/`。如果点击后没有进入“生成分享图”，会按 `generate_qr_retry_count` 重新获取窗口并重试。截图保存后默认点击左上角返回两次，回到主界面等待付款列表；检测到“已支付”后先发送 Webhook，再进入详情关闭、确认、删除收款单。关闭、确认、删除和更多操作默认必须读取并操作对应 UIA 文本元素，找不到元素时停止，不能使用可能落到“发起收款”的固定坐标兜底；最终确认目标订单号已从列表消失后才返回删除成功。
 - 等待支付时通过右上角三个点打开小程序菜单，再点击“重新进入小程序”刷新页面；普通检查优先复用矩形仍有效的 UIA `root`，每次重新进入后必须丢弃旧 `root` 并按窗口标题获取新对象，避免窗口重建或 PID 变化导致旧对象失效。重新进入后必须等待页面读取到有效文本才能继续。若 `order_status_load_timeout_seconds` 内仍完全读不到文本，应等待 `status_refresh_retry_wait_seconds` 后再次执行“重新进入小程序”。订单状态优先用订单号和状态文本的独立矩形匹配；刷新后如果微信把卡片合并成单个 UIA 容器，则匹配同时包含订单号和状态的最小容器；兜底规则为页面有可读文本且不包含“暂无人付款”即按已支付通过。达到 `max_payment_refresh_count`（默认 5）次且明确仍为“暂无人付款”时，判定支付失败，进入订单详情关闭并删除收款单，清理失效二维码后释放任务。
+- 点击订单卡片后如果第一次未进入“收款记录”，必须丢弃旧窗口对象，重新按 PID/窗口标题读取顶级窗口，重新扫描目标订单号和状态元素，再按新元素的实时矩形重试；不要沿用旧窗口坐标生成偏移点。
 - 为了速度，`amount_clear_backspace_count` 默认是 `0`，表示不预先清空金额。新打开创建页时金额为空，可在 1-2 秒内完成填写；如果反复复用同一个创建页并需要覆盖旧金额，可以把它改成 `8` 或更大。
 - `wait_poll_interval_seconds`、`paste_select_wait_seconds`、`paste_after_wait_seconds` 用于控制等待速度，默认按快速操作配置。
 - Flask 服务启动入口是 `python server.py`。`POST /create` 请求里的 `sign` 是客户端用 `keys/public_key.pem` 加密 `pid+amount+timestamp` 后得到的 base64/base64url 文本；服务端用 `keys/private_key.pem` 解密并比对。

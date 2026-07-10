@@ -18,7 +18,9 @@ class WechatPayOrderComponents:
     generated_share_title: str = "生成分享图"
     wait_payment_status_text: str = "暂无人付款"
     paid_status_text: str = "已支付"
+    paid_count_text: str = "共计"
     payment_detail_title: str = "收款记录"
+    all_pay_orders_text: str = "全部收款单"
     more_action_text: str = "更多操作"
     close_pay_order_text: str = "关闭收款单"
     confirm_close_pay_order_text: str = "确定关闭"
@@ -40,11 +42,9 @@ class WechatPayOrderComponents:
     return_back_click_count: int = 2
     paid_card_x_ratio: float = 0.28
     paid_card_y_ratio: float = 0.37
-    order_card_click_retry_offsets: tuple[tuple[float, float], ...] = (
-        (0.0, 0.0),
-        (0.16, 0.0),
-        (0.0, -0.05),
-    )
+    order_card_click_max_attempts: int = 3
+    order_card_reacquire_retry_wait_seconds: float = 0.10
+    order_card_retry_status_timeout_seconds: float = 2.0
     more_action_x_ratio: float = 0.87
     more_action_y_ratio: float = 0.13
     close_pay_order_x_ratio: float = 0.50
@@ -65,9 +65,10 @@ class WechatPayOrderComponents:
     qr_card_bottom_ratio: float = 0.663
     amount_clear_backspace_count: int = 0
     fast_input_coordinate_mode: bool = True
-    fast_close_delete_coordinate_mode: bool = True
-    fast_close_delete_step_wait_seconds: float = 0.20
-    fast_delete_complete_wait_seconds: float = 0.40
+    fast_close_delete_coordinate_mode: bool = False
+    fast_close_delete_retry_wait_seconds: float = 0.80
+    fast_close_delete_verify_timeout_seconds: float = 3.0
+    delete_verification_timeout_seconds: float = 5.0
     wait_poll_interval_seconds: float = 0.05
     window_reacquire_interval_seconds: float = 0.25
     window_reacquire_timeout_seconds: float = 3.0
@@ -80,12 +81,13 @@ class WechatPayOrderComponents:
     order_status_load_timeout_seconds: float = 8.0
     status_refresh_retry_wait_seconds: float = 0.30
     max_payment_refresh_count: int = 5
-    payment_detail_click_wait_seconds: float = 0.35
+    payment_detail_click_wait_seconds: float = 0.25
+    payment_detail_visual_settle_wait_seconds: float = 0.20
     payment_detail_final_wait_seconds: float = 3.0
     payment_detail_visual_sample_width: int = 72
     payment_detail_visual_sample_height: int = 112
     payment_detail_visual_pixel_threshold: int = 18
-    payment_detail_visual_change_ratio: float = 0.06
+    payment_detail_visual_change_ratio: float = 0.12
     generate_qr_retry_count: int = 3
     generate_qr_page_timeout_seconds: float = 4.0
     generate_qr_retry_wait_seconds: float = 0.10

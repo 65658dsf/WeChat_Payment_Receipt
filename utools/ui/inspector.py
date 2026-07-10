@@ -168,7 +168,17 @@ def _find_uia_top_windows(
             matched.append(window)
 
     result = matched if pid is None else matched or fallback_by_pid
-    return sorted(result, key=_uia_window_sort_key)
+
+    def title_aware_sort_key(window: Any) -> tuple[int, int, int, int]:
+        info = getattr(window, "element_info", window)
+        title = str(
+            _safe_get(lambda: info.name, "")
+            or _safe_method(window, "window_text", "")
+            or ""
+        )
+        return (0 if title.strip() == window_title.strip() else 1, *_uia_window_sort_key(window))
+
+    return sorted(result, key=title_aware_sort_key)
 
 
 def _uia_window_sort_key(window: Any) -> tuple[int, int, int]:
